@@ -18,10 +18,9 @@ function getFeedData($url, &$errorMsg = '') {
     curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-    curl_setopt($ch, CURLOPT_ENCODING, ''); // Accepts gzip/deflate automatically
+    curl_setopt($ch, CURLOPT_ENCODING, '');
     curl_setopt($ch, CURLOPT_TIMEOUT, 60);
     
-    // Full Browser Headers Emulation
     $headers = [
         'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language: uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -52,7 +51,6 @@ if (!$rawXml) {
     exit;
 }
 
-// Parse source XML
 libxml_use_internal_errors(true);
 $sourceXml = simplexml_load_string($rawXml);
 
@@ -62,7 +60,6 @@ if (!$sourceXml) {
     exit;
 }
 
-// Determine request mode (catalog vs prices)
 $type = isset($_GET['type']) ? strtolower($_GET['type']) : 'catalog';
 
 function cleanText($text) {
