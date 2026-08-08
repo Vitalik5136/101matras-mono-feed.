@@ -9,7 +9,6 @@ set_time_limit(120);
 
 header('Content-Type: application/xml; charset=utf-8');
 
-// Advanced cURL fetch with browser emulation and error details
 function getFeedData($url, &$errorMsg = '') {
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
@@ -132,12 +131,21 @@ if ($type === 'prices') {
             $o = $offersOut->addChild('offer');
             $o->addAttribute('id', (string)$offer['id']);
             
-            $available = (isset($offer['available']) && (string)$offer['available'] === 'true') ? 'true' : 'false';
-            $o->addAttribute('available', $available);
+            // Universal availability check (handles true, 1, yes)
+            $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
+            $isAvailable = ($availAttr === 'true' || $availAttr === '1' || $availAttr === 'yes') ? 'true' : 'false';
+            $o->addAttribute('available', $isAvailable);
 
-            if (isset($offer->price)) $o->addChild('price', (string)$offer->price);
-            if (isset($offer->oldprice)) $o->addChild('oldprice', (string)$offer->oldprice);
-            if (isset($offer->currencyId)) $o->addChild('currencyId', (string)$offer->currencyId);
+            if (isset($offer->price)) {
+                $o->addChild('price', (string)$offer->price);
+            }
+            if (isset($offer->oldprice)) {
+                $o->addChild('oldprice', (string)$offer->oldprice);
+            }
+            
+            // Currency fallback to UAH if not defined in source
+            $currency = isset($offer->currencyId) ? (string)$offer->currencyId : 'UAH';
+            $o->addChild('currencyId', $currency);
         }
     }
 
