@@ -118,7 +118,7 @@ if ($type === 'catalog') {
     exit;
 }
 
-// Generate Price & Stock Feed
+// Generate Price, Stock & Delivery Feed
 if ($type === 'prices') {
     $out = new SimpleXMLElement('<?xml version="1.0" encoding="UTF-8"?><yml_catalog></yml_catalog>');
     $out->addAttribute('date', date('Y-m-d H:i'));
@@ -131,10 +131,28 @@ if ($type === 'prices') {
             $o = $offersOut->addChild('offer');
             $o->addAttribute('id', (string)$offer['id']);
             
-            // Universal availability check (handles true, 1, yes)
+            // 1. Availability check
             $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
-            $isAvailable = ($availAttr === 'true' || $availAttr === '1' || $availAttr === 'yes') ? 'true' : 'false';
-            $o->addAttribute('available', $isAvailable);
+            $isAvailable = ($availAttr === 'true' || $availAttr === '1' || $availAttr === 'yes');
+            
+            // 2. Additional check for "On Order" / "Под заказ" status in custom Horoshop elements
+            $isCustomOrder = false;
+            if (isset($offer->stock_quantity) && (int)$offer->stock_quantity <= 0) {
+                $isCustomOrder = true;
+            }
+            
+            // Check params for "Наявність" / "Наличие"
+            foreach ($offer->param as $param) {
+                $pName = mb_strtolower((string)$param['name']);
+                $pVal = mb_strtolower((string)$param);
+                if (strpos($pName, 'наявн') !== false || strpos($pName, 'налич') !== false) {
+                    if (strpos($pVal, 'замовл') !== false || strpos($pVal, 'заказ') !== false || strpos($pVal, 'немає') !== false) {
+                        $isCustomOrder = true;
+                    }
+                }
+            }
+
+            $o->addAttribute('available', $isAvailable ? 'true' : 'false');
 
             if (isset($offer->price)) {
                 $o->addChild('price', (string)$offer->price);
@@ -143,9 +161,20 @@ if ($type === 'prices') {
                 $o->addChild('oldprice', (string)$offer->oldprice);
             }
             
-            // Currency fallback to UAH if not defined in source
             $currency = isset($offer->currencyId) ? (string)$offer->currencyId : 'UAH';
             $o->addChild('currencyId', $currency);
+
+            // 3. Dynamic Delivery Options
+            $deliveryOpts = $o->addChild('delivery-options');
+            $option = $deliveryOpts->addChild('option');
+            $option->addAttribute('cost', '0');
+            
+            // If in stock AND NOT custom order -> 3-5 days. Otherwise -> 5-30 days
+            if ($isAvailable && !$isCustomOrder) {
+                $option->addAttribute('days', '3-5');
+            } else {
+                $option->addAttribute('days', '5-30');
+            }
         }
     }
 
