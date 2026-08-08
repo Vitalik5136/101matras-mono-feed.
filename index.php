@@ -2,7 +2,7 @@
 // ==========================================
 // CONFIGURATION
 // ==========================================
-define('HOROSHOP_FEED_URL', 'https://101matras.ua/outputs/prom.xml');
+define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/48f97829a88a8ed0506e4cb76c65f605.xml');
 
 ini_set('memory_limit', '512M');
 set_time_limit(120);
