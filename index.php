@@ -1,234 +1,143 @@
 <?php
-/**
- * Monomarket XML Feed Splitter for Horoshop
- */
-
+// ==========================================
+// CONFIGURATION
+// ==========================================
 define('HOROSHOP_FEED_URL', 'https://101matras.ua/outputs/prom.xml');
-define('CACHE_LIFETIME', 1800); // 30 минут
-define('CACHE_DIR', '/tmp/cache/');
 
-$type = isset($_GET['type']) ? strtolower($_GET['type']) : 'catalog';
+// Allow higher memory and execution time for processing large XML feeds
+ini_set('memory_limit', '512M');
+set_time_limit(120);
 
-if (!in_array($type, ['catalog', 'prices'])) {
-    http_response_code(400);
-    die('Invalid type parameter. Use ?type=catalog or ?type=prices');
+header('Content-Type: application/xml; charset=utf-8');
+
+// Fetch feed using cURL with custom User-Agent to bypass potential server blocks
+function getFeedData($url) {
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    $data = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode !== 200 || empty($data)) {
+        return false;
+    }
+    return $data;
 }
 
-if (!file_exists(CACHE_DIR)) {
-    mkdir(CACHE_DIR, 0755, true);
-}
+$rawXml = getFeedData(HOROSHOP_FEED_URL);
 
-$cache_file = CACHE_DIR . "mono_{$type}.xml";
-
-if (file_exists($cache_file) && (time() - filemtime($cache_file) < CACHE_LIFETIME)) {
-    header('Content-Type: application/xml; charset=utf-8');
-    echo file_get_contents($cache_file);
+if (!$rawXml) {
+    http_response_code(500);
+    echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<error>Error fetching source Horoshop XML feed from " . htmlspecialchars(HOROSHOP_FEED_URL) . "</error>";
     exit;
 }
 
-$xml_raw = @file_get_contents(HOROSHOP_FEED_URL);
-if (!$xml_raw) {
-    if (file_exists($cache_file)) {
-        header('Content-Type: application/xml; charset=utf-8');
-        echo file_get_contents($cache_file);
-        exit;
-    }
-    http_response_code(500);
-    die('Error fetching source Horoshop XML feed.');
-}
-
+// Parse source XML
 libxml_use_internal_errors(true);
-$xml = simplexml_load_string($xml_raw);
+$sourceXml = simplexml_load_string($rawXml);
 
-if (!$xml) {
+if (!$sourceXml) {
     http_response_code(500);
-    die('Error parsing XML feed.');
+    echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<error>Failed to parse source XML feed</error>";
+    exit;
 }
 
+// Determine request mode (catalog vs prices)
+$type = isset($_GET['type']) ? strtolower($_GET['type']) : 'catalog';
+
+// Helper function to clean text output (removes CAPS overuse, forbidden HTML tags)
+function cleanText($text) {
+    $text = strip_tags($text, '<p><b><i><ul><li><br>');
+    return trim($text);
+}
+
+// Generate Catalog Feed
 if ($type === 'catalog') {
-    $output_xml = generateCatalogXml($xml);
-} else {
-    $output_xml = generatePricesXml($xml);
-}
+    $out = new SimpleXMLElement('<?xml version="1.0" encoding="UTF-8"?><yml_catalog></yml_catalog>');
+    $out->addAttribute('date', date('Y-m-d H:i'));
+    
+    $shop = $out->addChild('shop');
+    $shop->addChild('name', '101matras');
+    $shop->addChild('company', '101matras');
+    $shop->addChild('url', 'https://101matras.ua/');
 
-file_put_contents($cache_file, $output_xml);
-
-header('Content-Type: application/xml; charset=utf-8');
-echo $output_xml;
-exit;
-
-function generateCatalogXml($sourceXml) {
-    $dom = new DOMDocument('1.0', 'UTF-8');
-    $dom->formatOutput = true;
-
-    $root = $dom->createElement('yml_catalog');
-    $root->setAttribute('date', date('Y-m-d H:i'));
-    $dom->appendChild($root);
-
-    $shop = $dom->createElement('shop');
-    $root->appendChild($shop);
-
-    $categoriesMap = [];
-    $parentIds = [];
+    // Copy Categories
     if (isset($sourceXml->shop->categories)) {
+        $categoriesOut = $shop->addChild('categories');
         foreach ($sourceXml->shop->categories->category as $cat) {
-            $catId = (string)$cat['id'];
-            $categoriesMap[$catId] = (string)$cat;
+            $c = $categoriesOut->addChild('category', htmlspecialchars((string)$cat));
+            $c->addAttribute('id', (string)$cat['id']);
             if (isset($cat['parentId'])) {
-                $parentIds[(string)$cat['parentId']] = true;
+                $c->addAttribute('parentId', (string)$cat['parentId']);
             }
         }
     }
 
-    $categoriesNode = $dom->createElement('categories');
-    foreach ($categoriesMap as $id => $name) {
-        if (!isset($parentIds[$id])) {
-            $c = $dom->createElement('category', htmlspecialchars($name));
-            $c->setAttribute('id', $id);
-            $categoriesNode->appendChild($c);
-        }
-    }
-    $shop->appendChild($categoriesNode);
-
-    $offersNode = $dom->createElement('offers');
-
+    // Copy Products (Catalog Details Only)
+    $offersOut = $shop->addChild('offers');
     if (isset($sourceXml->shop->offers->offer)) {
-        foreach ($sourceXml->shop->offers->offer as $sourceOffer) {
-            $available = isset($sourceOffer['available']) ? (string)$sourceOffer['available'] : 'true';
-            if ($available === 'false') continue;
+        foreach ($sourceXml->shop->offers->offer as $offer) {
+            $o = $offersOut->addChild('offer');
+            $o->addAttribute('id', (string)$offer['id']);
+            
+            if (isset($offer->url)) $o->addChild('url', htmlspecialchars((string)$offer->url));
+            if (isset($offer->categoryId)) $o->addChild('categoryId', (string)$offer->categoryId);
+            if (isset($offer->name)) $o->addChild('name', htmlspecialchars(cleanText((string)$offer->name)));
+            if (isset($offer->vendor)) $o->addChild('vendor', htmlspecialchars((string)$offer->vendor));
+            if (isset($offer->vendorCode)) $o->addChild('vendorCode', htmlspecialchars((string)$offer->vendorCode));
+            if (isset($offer->barcode)) $o->addChild('barcode', htmlspecialchars((string)$offer->barcode));
+            if (isset($offer->description)) $o->addChild('description', htmlspecialchars(cleanText((string)$offer->description)));
 
-            $offer = $dom->createElement('offer');
-            $id = (string)$sourceOffer['id'];
-            $offer->setAttribute('id', $id);
-
-            $rawTitle = (string)$sourceOffer->name;
-            $cleanTitle = formatMonomarketTitle($rawTitle);
-            appendCDataNode($dom, $offer, 'title', $cleanTitle);
-
-            $brand = isset($sourceOffer->vendor) ? (string)$sourceOffer->vendor : getParamValue($sourceOffer, ['Бренд', 'Виробник', 'Brand']);
-            if (empty($brand)) $brand = '101Matras';
-            $offer->appendChild($dom->createElement('brand', htmlspecialchars($brand)));
-
-            $vendorCode = isset($sourceOffer->vendorCode) ? (string)$sourceOffer->vendorCode : $id;
-            $offer->appendChild($dom->createElement('vendor_code', htmlspecialchars($vendorCode)));
-
-            $barcode = isset($sourceOffer->barcode) ? (string)$sourceOffer->barcode : getParamValue($sourceOffer, ['Баркод', 'Штрихкод', 'Barcode', 'EAN']);
-            if (empty($barcode)) $barcode = $id;
-            $offer->appendChild($dom->createElement('barcode', htmlspecialchars($barcode)));
-
-            if (isset($sourceOffer->categoryId)) {
-                $offer->appendChild($dom->createElement('categoryId', (string)$sourceOffer->categoryId));
+            // Pictures
+            foreach ($offer->picture as $pic) {
+                $o->addChild('picture', htmlspecialchars((string)$pic));
             }
 
-            if (isset($sourceOffer->description)) {
-                $cleanDesc = cleanDescriptionForMono((string)$sourceOffer->description);
-                appendCDataNode($dom, $offer, 'description', $cleanDesc);
-            }
-
-            $picCount = 0;
-            foreach ($sourceOffer->picture as $pic) {
-                if ($picCount >= 3) break;
-                $offer->appendChild($dom->createElement('picture', htmlspecialchars((string)$pic)));
-                $picCount++;
-            }
-
-            foreach ($sourceOffer->param as $param) {
-                $p = $dom->createElement('param', htmlspecialchars((string)$param));
-                $p->setAttribute('name', (string)$param['name']);
-                if (isset($param['unit'])) {
-                    $p->setAttribute('unit', (string)$param['unit']);
+            // Parameters
+            foreach ($offer->param as $param) {
+                $p = $o->addChild('param', htmlspecialchars((string)$param));
+                if (isset($param['name'])) {
+                    $p->addAttribute('name', (string)$param['name']);
                 }
-                $offer->appendChild($p);
             }
-
-            $offersNode->appendChild($offer);
         }
     }
-    $shop->appendChild($offersNode);
 
-    return $dom->saveXML();
+    echo $out->asXML();
+    exit;
 }
 
-function generatePricesXml($sourceXml) {
-    $dom = new DOMDocument('1.0', 'UTF-8');
-    $dom->formatOutput = true;
-
-    $root = $dom->createElement('yml_catalog');
-    $root->setAttribute('date', date('Y-m-d H:i'));
-    $dom->appendChild($root);
-
-    $shop = $dom->createElement('shop');
-    $root->appendChild($shop);
-
-    $offersNode = $dom->createElement('offers');
+// Generate Price & Stock Feed
+if ($type === 'prices') {
+    $out = new SimpleXMLElement('<?xml version="1.0" encoding="UTF-8"?><yml_catalog></yml_catalog>');
+    $out->addAttribute('date', date('Y-m-d H:i'));
+    
+    $shop = $out->addChild('shop');
+    $offersOut = $shop->addChild('offers');
 
     if (isset($sourceXml->shop->offers->offer)) {
-        foreach ($sourceXml->shop->offers->offer as $sourceOffer) {
-            $available = isset($sourceOffer['available']) ? (string)$sourceOffer['available'] : 'true';
-            if ($available === 'false') continue;
+        foreach ($sourceXml->shop->offers->offer as $offer) {
+            $o = $offersOut->addChild('offer');
+            $o->addAttribute('id', (string)$offer['id']);
+            
+            $available = (isset($offer['available']) && (string)$offer['available'] === 'true') ? 'true' : 'false';
+            $o->addAttribute('available', $available);
 
-            $offer = $dom->createElement('offer');
-            $offer->setAttribute('id', (string)$sourceOffer['id']);
-            $offer->setAttribute('available', 'true');
-
-            if (isset($sourceOffer->price)) {
-                $offer->appendChild($dom->createElement('price', (string)$sourceOffer->price));
-            }
-            if (isset($sourceOffer->oldprice)) {
-                $offer->appendChild($dom->createElement('oldprice', (string)$sourceOffer->oldprice));
-            }
-            if (isset($sourceOffer->currencyId)) {
-                $offer->appendChild($dom->createElement('currencyId', (string)$sourceOffer->currencyId));
-            }
-            if (isset($sourceOffer->quantity_in_stock)) {
-                $offer->appendChild($dom->createElement('quantity_in_stock', (string)$sourceOffer->quantity_in_stock));
-            }
-
-            $offersNode->appendChild($offer);
+            if (isset($offer->price)) $o->addChild('price', (string)$offer->price);
+            if (isset($offer->oldprice)) $o->addChild('oldprice', (string)$offer->oldprice);
+            if (isset($offer->currencyId)) $o->addChild('currencyId', (string)$offer->currencyId);
         }
     }
 
-    $shop->appendChild($offersNode);
-
-    return $dom->saveXML();
+    echo $out->asXML();
+    exit;
 }
 
-function formatMonomarketTitle($title) {
-    $stopWords = ['акція', 'акция', 'знижка', 'скидка', 'розпродаж', 'распродажа', 'уцінка', 'уценка', 'copy', 'original'];
-    foreach ($stopWords as $word) {
-        $title = preg_replace('/\b' . preg_quote($word, '/') . '\b/ui', '', $title);
-    }
-    if (mb_strtoupper($title, 'UTF-8') === $title) {
-        $title = mb_convert_case($title, MB_CASE_TITLE, "UTF-8");
-    }
-    $title = trim(preg_replace('/\s+/', ' ', $title));
-    if (mb_strlen($title, 'UTF-8') > 100) {
-        $title = mb_substr($title, 0, 97, 'UTF-8') . '...';
-    }
-    return $title;
-}
-
-function cleanDescriptionForMono($html) {
-    $allowedTags = '<h5><br><ul><li><img><p>';
-    $clean = strip_tags($html, $allowedTags);
-    return trim($clean);
-}
-
-function getParamValue($offer, array $names) {
-    foreach ($offer->param as $param) {
-        $pName = (string)$param['name'];
-        foreach ($names as $searchName) {
-            if (mb_strtolower($pName, 'UTF-8') === mb_strtolower($searchName, 'UTF-8')) {
-                return (string)$param;
-            }
-        }
-    }
-    return '';
-}
-
-function appendCDataNode($dom, $parent, $name, $text) {
-    $node = $dom->createElement($name);
-    $cdata = $dom->createCDATASection($text);
-    $node->appendChild($cdata);
-    $parent->appendChild($node);
-}
+// Invalid parameter handling
+http_response_code(400);
+echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<error>Invalid type parameter. Use ?type=catalog or ?type=prices</error>";
