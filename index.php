@@ -4,36 +4,51 @@
 // ==========================================
 define('HOROSHOP_FEED_URL', 'https://101matras.ua/outputs/prom.xml');
 
-// Allow higher memory and execution time for processing large XML feeds
 ini_set('memory_limit', '512M');
 set_time_limit(120);
 
 header('Content-Type: application/xml; charset=utf-8');
 
-// Fetch feed using cURL with custom User-Agent to bypass potential server blocks
-function getFeedData($url) {
+// Advanced cURL fetch with browser emulation and error details
+function getFeedData($url, &$errorMsg = '') {
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+    curl_setopt($ch, CURLOPT_ENCODING, ''); // Accepts gzip/deflate automatically
     curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    
+    // Full Browser Headers Emulation
+    $headers = [
+        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language: uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control: no-cache',
+        'Pragma: no-cache',
+    ];
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+
     $data = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr = curl_error($ch);
     curl_close($ch);
 
     if ($httpCode !== 200 || empty($data)) {
+        $errorMsg = "HTTP Code: {$httpCode}. cURL Error: {$curlErr}";
         return false;
     }
     return $data;
 }
 
-$rawXml = getFeedData(HOROSHOP_FEED_URL);
+$fetchError = '';
+$rawXml = getFeedData(HOROSHOP_FEED_URL, $fetchError);
 
 if (!$rawXml) {
     http_response_code(500);
-    echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<error>Error fetching source Horoshop XML feed from " . htmlspecialchars(HOROSHOP_FEED_URL) . "</error>";
+    echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<error>Error fetching source Horoshop XML feed. Details: " . htmlspecialchars($fetchError) . "</error>";
     exit;
 }
 
@@ -50,7 +65,6 @@ if (!$sourceXml) {
 // Determine request mode (catalog vs prices)
 $type = isset($_GET['type']) ? strtolower($_GET['type']) : 'catalog';
 
-// Helper function to clean text output (removes CAPS overuse, forbidden HTML tags)
 function cleanText($text) {
     $text = strip_tags($text, '<p><b><i><ul><li><br>');
     return trim($text);
@@ -66,7 +80,6 @@ if ($type === 'catalog') {
     $shop->addChild('company', '101matras');
     $shop->addChild('url', 'https://101matras.ua/');
 
-    // Copy Categories
     if (isset($sourceXml->shop->categories)) {
         $categoriesOut = $shop->addChild('categories');
         foreach ($sourceXml->shop->categories->category as $cat) {
@@ -78,7 +91,6 @@ if ($type === 'catalog') {
         }
     }
 
-    // Copy Products (Catalog Details Only)
     $offersOut = $shop->addChild('offers');
     if (isset($sourceXml->shop->offers->offer)) {
         foreach ($sourceXml->shop->offers->offer as $offer) {
@@ -93,12 +105,10 @@ if ($type === 'catalog') {
             if (isset($offer->barcode)) $o->addChild('barcode', htmlspecialchars((string)$offer->barcode));
             if (isset($offer->description)) $o->addChild('description', htmlspecialchars(cleanText((string)$offer->description)));
 
-            // Pictures
             foreach ($offer->picture as $pic) {
                 $o->addChild('picture', htmlspecialchars((string)$pic));
             }
 
-            // Parameters
             foreach ($offer->param as $param) {
                 $p = $o->addChild('param', htmlspecialchars((string)$param));
                 if (isset($param['name'])) {
@@ -138,6 +148,5 @@ if ($type === 'prices') {
     exit;
 }
 
-// Invalid parameter handling
 http_response_code(400);
 echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<error>Invalid type parameter. Use ?type=catalog or ?type=prices</error>";
