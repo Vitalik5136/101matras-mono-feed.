@@ -66,6 +66,13 @@ $type = isset($_GET['type']) ? strtolower($_GET['type']) : 'catalog';
 // GS1 restricted-circulation prefix ("20") -- reserved for internal/company
 // use, will never collide with a real manufacturer barcode. Deterministic:
 // same offer id always produces the same barcode.
+//
+// !!! DO NOT CHANGE THIS FUNCTION'S LOGIC !!!
+// Changing the formula here would reassign a DIFFERENT barcode to every
+// existing product the next time this runs -- breaking the "permanently
+// pinned to the product" guarantee. If a real barcode is ever needed
+// instead, add it to the source feed (see the barcode override check
+// below) rather than editing this function.
 function generateBarcode($offerId) {
     $digits = preg_replace('/\D/', '', (string)$offerId);
     if ($digits === '') $digits = '0';
@@ -329,7 +336,10 @@ if ($type === 'catalog') {
             $leaf = suggestCategory($title, strip_tags($descriptionHtml), $categoryIdSrc);
             $categoryText = $leaf !== '' ? $leaf : ($categoryNames[$categoryIdSrc] ?? '');
 
-            $barcode = generateBarcode($offerId);
+            // Use the real barcode from the source feed if Horoshop ever
+            // starts providing one; only self-generate when it's missing.
+            $sourceBarcode = isset($offer->barcode) ? trim((string)$offer->barcode) : '';
+            $barcode = $sourceBarcode !== '' ? $sourceBarcode : generateBarcode($offerId);
             $dims = estimateDimensions($title);
             // Weight/dimensions are only reliable for mattresses (category
             // 1061) -- the rolled-width override and volumetric formula
