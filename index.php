@@ -425,6 +425,17 @@ if ($type === 'prices') {
                 }
             }
 
+            // Use the installment count from the source feed if Horoshop
+            // ever starts providing one (checked under a few plausible
+            // tag names); default to 10 payments when it's missing.
+            $maxPayInParts = 10;
+            foreach (['max_pay_in_parts', 'installment', 'parts', 'rassrochka'] as $tagName) {
+                if (isset($offer->{$tagName}) && trim((string)$offer->{$tagName}) !== '') {
+                    $maxPayInParts = (int)$offer->{$tagName};
+                    break;
+                }
+            }
+
             $data[] = [
                 'code' => $offerId,
                 'price' => $price,
@@ -432,7 +443,7 @@ if ($type === 'prices') {
                 'availability' => $isAvailable,
                 'warranty_type' => $warrantyMonthsVal > 0 ? 'manufacturer' : 'no',
                 'warranty_period' => $warrantyMonthsVal,
-                'max_pay_in_parts' => null, // TODO: set your installment policy
+                'max_pay_in_parts' => $maxPayInParts,
                 'days_to_dispatch' => $isAvailable ? 3 : 30, // in stock -> 3 days, out of stock -> 30 days
                 'stock' => $isAvailable ? 10 : 0,  // no real quantity in source -- placeholder based on availability
                 'warehouses' => [],         // TODO: needs your inventory system
