@@ -411,7 +411,7 @@ if ($type === 'prices') {
                 'warranty_type' => $warrantyMonthsVal > 0 ? 'manufacturer' : 'no',
                 'warranty_period' => $warrantyMonthsVal,
                 'max_pay_in_parts' => null, // TODO: set your installment policy
-                'days_to_dispatch' => null, // TODO: set your dispatch SLA
+                'days_to_dispatch' => $isAvailable ? 3 : 30, // in stock -> 3 days, out of stock -> 30 days
                 'stock' => null,            // TODO: needs your inventory system
                 'warehouses' => [],         // TODO: needs your inventory system
             ];
