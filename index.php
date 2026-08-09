@@ -331,6 +331,18 @@ if ($type === 'catalog') {
 
             $barcode = generateBarcode($offerId);
             $dims = estimateDimensions($title);
+            // Weight/dimensions are only reliable for mattresses (category
+            // 1061) -- the rolled-width override and volumetric formula
+            // below assume a mattress. Everything else (pillows, blankets,
+            // beds...) gets 0, not a wrong guess.
+            if ($categoryIdSrc !== '1061') {
+                $dims = null;
+            } elseif ($dims) {
+                // All mattresses ship rolled/compressed -- the real package
+                // width is a fixed roll diameter, not the flat mattress
+                // width from the title. Length and height stay as estimated.
+                $dims['width'] = 30;
+            }
 
             $o = $offersOut->addChild('offer');
             $o->addChild('code', htmlspecialchars($offerId));
@@ -350,7 +362,7 @@ if ($type === 'catalog') {
             $isAvailable = in_array($availAttr, ['true', '1', 'yes']);
             $o->addChild('availability', $isAvailable ? 'Є в наявності' : 'Немає в наявності');
 
-            $o->addChild('weight', '0'); // not fabricated -- see notes
+            $o->addChild('weight', (string)($dims ? round(($dims['length'] * $dims['width'] * $dims['height']) / 4000, 1) : 0));
             $o->addChild('height', (string)($dims['height'] ?? 0));
             $o->addChild('width', (string)($dims['width'] ?? 0));
             $o->addChild('length', (string)($dims['length'] ?? 0));
@@ -412,7 +424,7 @@ if ($type === 'prices') {
                 'warranty_period' => $warrantyMonthsVal,
                 'max_pay_in_parts' => null, // TODO: set your installment policy
                 'days_to_dispatch' => $isAvailable ? 3 : 30, // in stock -> 3 days, out of stock -> 30 days
-                'stock' => null,            // TODO: needs your inventory system
+                'stock' => $isAvailable ? 10 : 0,  // no real quantity in source -- placeholder based on availability
                 'warehouses' => [],         // TODO: needs your inventory system
             ];
         }
