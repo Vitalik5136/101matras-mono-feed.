@@ -2,7 +2,7 @@
 // ==========================================
 // CONFIGURATION
 // ==========================================
-define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/48f97829a88a8ed0506e4cb76c65f605.xml');
+define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/484848c604e645acf084b507b84b84fc.xml');
 
 ini_set('memory_limit', '512M');
 set_time_limit(120);
@@ -341,6 +341,7 @@ if ($type === 'catalog') {
             $sourceBarcode = isset($offer->barcode) ? trim((string)$offer->barcode) : '';
             $barcode = $sourceBarcode !== '' ? $sourceBarcode : generateBarcode($offerId);
             $dims = estimateDimensions($title);
+            $realMattressSize = null; // for the "Розмір" spec (actual WxL, not rolled package)
             // Weight/dimensions are only reliable for mattresses (category
             // 1061) -- the rolled-width override and volumetric formula
             // below assume a mattress. Everything else (pillows, blankets,
@@ -348,6 +349,7 @@ if ($type === 'catalog') {
             if ($categoryIdSrc !== '1061') {
                 $dims = null;
             } elseif ($dims) {
+                $realMattressSize = $dims['width'] . 'x' . $dims['length']; // real size, before override
                 // All mattresses ship rolled/compressed -- the real package
                 // width is a fixed roll diameter, not the flat mattress
                 // width from the title. Length and height stay as estimated.
@@ -382,6 +384,10 @@ if ($type === 'catalog') {
                 foreach ($offer->picture as $pic) {
                     $imageLink->addChild('picture', htmlspecialchars((string)$pic));
                 }
+            }
+
+            if ($realMattressSize !== null) {
+                $specs['Розмір'] = $realMattressSize; // real mattress WxL, e.g. "160x200" -- not the rolled package width
             }
 
             if (!empty($specs)) {
