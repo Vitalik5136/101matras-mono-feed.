@@ -485,7 +485,7 @@ if ($type === 'prices') {
             // Use the installment count from the source feed if Horoshop
             // ever starts providing one (checked under a few plausible
             // tag names); default to 10 payments when it's missing.
-            $maxPayInParts = 10;
+            $maxPayInParts = 6;
             foreach (['max_pay_in_parts', 'installment', 'parts', 'rassrochka'] as $tagName) {
                 if (isset($offer->{$tagName}) && trim((string)$offer->{$tagName}) !== '') {
                     $maxPayInParts = (int)$offer->{$tagName};
