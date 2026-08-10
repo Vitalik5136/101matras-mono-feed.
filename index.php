@@ -446,7 +446,12 @@ if ($type === 'prices') {
                 'max_pay_in_parts' => $maxPayInParts,
                 'days_to_dispatch' => $isAvailable ? 3 : 30, // in stock -> 3 days, out of stock -> 30 days
                 'stock' => $isAvailable ? 10 : 0,  // no real quantity in source -- placeholder based on availability
-                'warehouses' => [],         // TODO: needs your inventory system
+                'warehouses' => [
+                    [
+                        'id' => 'Main',
+                        'stock' => $isAvailable ? 10 : 0,
+                    ],
+                ],
             ];
         }
     }
