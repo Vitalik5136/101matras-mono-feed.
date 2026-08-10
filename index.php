@@ -317,8 +317,18 @@ if (isset($sourceXml->shop->categories)) {
 if ($type === 'catalog') {
     header('Content-Type: application/xml; charset=utf-8');
 
-    $out = new SimpleXMLElement('<?xml version="1.0" encoding="UTF-8"?><Market></Market>');
-    $offersOut = $out->addChild('offers');
+    // Stream the output with XMLWriter instead of building one giant
+    // SimpleXMLElement tree in memory -- for a large catalog, holding the
+    // full source parse AND a full duplicate output tree at once is what
+    // was exceeding the instance's memory limit. XMLWriter writes each
+    // offer straight to output and frees it, keeping peak memory flat
+    // regardless of catalog size.
+    $writer = new XMLWriter();
+    $writer->openURI('php://output');
+    $writer->setIndent(true);
+    $writer->startDocument('1.0', 'UTF-8');
+    $writer->startElement('Market');
+    $writer->startElement('offers');
 
     if (isset($sourceXml->shop->offers->offer)) {
         foreach ($sourceXml->shop->offers->offer as $offer) {
@@ -356,55 +366,69 @@ if ($type === 'catalog') {
                 $dims['width'] = 30;
             }
 
-            $o = $offersOut->addChild('offer');
-            $o->addChild('code', htmlspecialchars($offerId));
-            $o->addChild('id', htmlspecialchars($offerId));
-            if ($categoryIdSrc !== '') $o->addChild('category_id', htmlspecialchars($categoryIdSrc));
-            $o->addChild('vendor_code', htmlspecialchars($vendorCode));
-
-            $titleNode = $o->addChild('title');
-            $titleDom = dom_import_simplexml($titleNode);
-            $titleDom->appendChild($titleDom->ownerDocument->createCDATASection($title));
-
-            $o->addChild('category', htmlspecialchars($categoryText));
-            $o->addChild('brand', htmlspecialchars($brand));
-            $o->addChild('barcode', htmlspecialchars($barcode));
-
             $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
             $isAvailable = in_array($availAttr, ['true', '1', 'yes']);
-            $o->addChild('availability', $isAvailable ? 'Є в наявності' : 'Немає в наявності');
-
-            $o->addChild('weight', (string)($dims ? round(($dims['length'] * $dims['width'] * $dims['height']) / 4000, 1) : 0));
-            $o->addChild('height', (string)($dims['height'] ?? 0));
-            $o->addChild('width', (string)($dims['width'] ?? 0));
-            $o->addChild('length', (string)($dims['length'] ?? 0));
-
-            if (isset($offer->picture)) {
-                $imageLink = $o->addChild('image_link');
-                foreach ($offer->picture as $pic) {
-                    $imageLink->addChild('picture', htmlspecialchars((string)$pic));
-                }
-            }
 
             if ($realMattressSize !== null) {
-                $specs['Розмір'] = $realMattressSize; // real mattress WxL, e.g. "160x200" -- not the rolled package width
+                $specs['Розмір'] = $realMattressSize;
+            }
+
+            $writer->startElement('offer');
+            $writer->writeElement('code', $offerId);
+            $writer->writeElement('id', $offerId);
+            if ($categoryIdSrc !== '') $writer->writeElement('category_id', $categoryIdSrc);
+            $writer->writeElement('vendor_code', $vendorCode);
+
+            $writer->startElement('title');
+            $writer->writeCdata($title);
+            $writer->endElement();
+
+            $writer->writeElement('category', $categoryText);
+            $writer->writeElement('brand', $brand);
+            $writer->writeElement('barcode', $barcode);
+            $writer->writeElement('availability', $isAvailable ? 'Є в наявності' : 'Немає в наявності');
+
+            $writer->writeElement('weight', (string)($dims ? round(($dims['length'] * $dims['width'] * $dims['height']) / 4000, 1) : 0));
+            $writer->writeElement('height', (string)($dims['height'] ?? 0));
+            $writer->writeElement('width', (string)($dims['width'] ?? 0));
+            $writer->writeElement('length', (string)($dims['length'] ?? 0));
+
+            if (isset($offer->picture)) {
+                $writer->startElement('image_link');
+                foreach ($offer->picture as $pic) {
+                    $writer->writeElement('picture', (string)$pic);
+                }
+                $writer->endElement(); // image_link
             }
 
             if (!empty($specs)) {
-                $tags = $o->addChild('tags');
+                $writer->startElement('tags');
                 foreach ($specs as $label => $value) {
-                    $p = $tags->addChild('param', htmlspecialchars($value));
-                    $p->addAttribute('name', $label);
+                    $writer->startElement('param');
+                    $writer->writeAttribute('name', $label);
+                    $writer->text($value);
+                    $writer->endElement(); // param
                 }
+                $writer->endElement(); // tags
             }
 
-            $descNode = $o->addChild('description');
-            $descDom = dom_import_simplexml($descNode);
-            $descDom->appendChild($descDom->ownerDocument->createCDATASection($cleanedDesc));
+            $writer->startElement('description');
+            $writer->writeCdata($cleanedDesc);
+            $writer->endElement(); // description
+
+            $writer->endElement(); // offer
+
+            // Free per-offer variables and flush this offer to output now
+            // rather than accumulating everything in memory.
+            unset($specs, $cleanedDesc, $dims, $descriptionHtml, $titleRaw, $title);
+            $writer->flush();
         }
     }
 
-    echo $out->asXML();
+    $writer->endElement(); // offers
+    $writer->endElement(); // Market
+    $writer->endDocument();
+    $writer->flush();
     exit;
 }
 
