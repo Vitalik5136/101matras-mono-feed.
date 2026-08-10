@@ -8,18 +8,23 @@ ini_set('memory_limit', '512M');
 set_time_limit(120);
 
 // ==========================================
-// FETCH SOURCE FEED
+// FETCH SOURCE FEED (streamed to disk, not memory)
 // ==========================================
-function getFeedData($url, &$errorMsg = '') {
+function downloadFeedToFile($url, $tmpPath, &$errorMsg = '') {
+    $fp = fopen($tmpPath, 'w');
+    if (!$fp) {
+        $errorMsg = "could not open temp file for writing";
+        return false;
+    }
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FILE, $fp); // stream response body straight to disk
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
     curl_setopt($ch, CURLOPT_ENCODING, '');
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 90);
     $headers = [
         'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language: uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -28,34 +33,68 @@ function getFeedData($url, &$errorMsg = '') {
     ];
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-    $data = curl_exec($ch);
+    $ok = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $curlErr = curl_error($ch);
     curl_close($ch);
-    if ($httpCode !== 200 || empty($data)) {
+    fclose($fp);
+    if (!$ok || $httpCode !== 200) {
         $errorMsg = "HTTP Code: {$httpCode}. cURL Error: {$curlErr}";
+        @unlink($tmpPath);
         return false;
     }
-    return $data;
+    return true;
 }
 
+$tmpFeedFile = tempnam(sys_get_temp_dir(), 'feed_');
 $fetchError = '';
-$rawXml = getFeedData(HOROSHOP_FEED_URL, $fetchError);
-if (!$rawXml) {
+if (!downloadFeedToFile(HOROSHOP_FEED_URL, $tmpFeedFile, $fetchError)) {
     http_response_code(500);
     header('Content-Type: application/xml; charset=utf-8');
     echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<error>Error fetching source Horoshop XML feed. Details: " . htmlspecialchars($fetchError) . "</error>";
     exit;
 }
+register_shutdown_function(function () use ($tmpFeedFile) { @unlink($tmpFeedFile); });
 
-libxml_use_internal_errors(true);
-$sourceXml = simplexml_load_string($rawXml);
-if (!$sourceXml) {
-    http_response_code(500);
-    header('Content-Type: application/xml; charset=utf-8');
-    echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<error>Failed to parse source XML feed</error>";
-    exit;
+// Reads <offer> elements one at a time from the downloaded file using
+// XMLReader (a forward-only pull parser) instead of loading the whole feed
+// into one big SimpleXML tree. This is what actually fixes the memory
+// limit crashes on a large catalog: peak memory now stays roughly the size
+// of ONE offer at a time, not the whole feed. Each yielded $offer behaves
+// exactly like the old SimpleXMLElement (same ->tag and ->tag['attr']
+// access), so the rest of the per-offer logic below is unchanged.
+function iterateOffers($tmpPath) {
+    $reader = new XMLReader();
+    $reader->open($tmpPath);
+    while ($reader->read()) {
+        if ($reader->nodeType === XMLReader::ELEMENT && $reader->name === 'offer') {
+            $node = $reader->expand();
+            $dom = new DOMDocument();
+            $imported = $dom->importNode($node, true);
+            $dom->appendChild($imported);
+            yield simplexml_import_dom($imported);
+            $reader->next(); // skip past this offer's children, move to the next sibling
+        }
+    }
+    $reader->close();
 }
+
+// Small, cheap first pass just to build the category id -> name map
+// (categories are a short section near the top of the file, so this pass
+// stops as soon as it reaches <offers>).
+$categoryNames = [];
+$catReader = new XMLReader();
+$catReader->open($tmpFeedFile);
+while ($catReader->read()) {
+    if ($catReader->nodeType === XMLReader::ELEMENT && $catReader->name === 'category') {
+        $id = $catReader->getAttribute('id');
+        $catNode = $catReader->expand();
+        if ($id !== null) $categoryNames[$id] = trim($catNode->textContent);
+    } elseif ($catReader->nodeType === XMLReader::ELEMENT && $catReader->name === 'offers') {
+        break; // categories are always listed before offers in this feed
+    }
+}
+$catReader->close();
 
 $type = isset($_GET['type']) ? strtolower($_GET['type']) : 'catalog';
 
@@ -300,16 +339,7 @@ function warrantyMonths($text) {
     return 0;
 }
 
-$categoryNames = [];
 $categoryHasChildren = [];
-if (isset($sourceXml->shop->categories)) {
-    foreach ($sourceXml->shop->categories->category as $cat) {
-        $categoryNames[(string)$cat['id']] = trim((string)$cat);
-        if (isset($cat['parentId'])) {
-            $categoryHasChildren[(string)$cat['parentId']] = true;
-        }
-    }
-}
 
 // ==========================================
 // type=catalog -- товарний XML-фід (Market > offers > offer)
@@ -330,8 +360,7 @@ if ($type === 'catalog') {
     $writer->startElement('Market');
     $writer->startElement('offers');
 
-    if (isset($sourceXml->shop->offers->offer)) {
-        foreach ($sourceXml->shop->offers->offer as $offer) {
+    foreach (iterateOffers($tmpFeedFile) as $offer) {
             $offerId = (string)$offer['id'];
             $categoryIdSrc = isset($offer->categoryId) ? (string)$offer->categoryId : '';
             $vendorCode = isset($offer->vendorCode) ? (string)$offer->vendorCode : '';
@@ -423,7 +452,6 @@ if ($type === 'catalog') {
             unset($specs, $cleanedDesc, $dims, $descriptionHtml, $titleRaw, $title);
             $writer->flush();
         }
-    }
 
     $writer->endElement(); // offers
     $writer->endElement(); // Market
@@ -439,8 +467,7 @@ if ($type === 'prices') {
     header('Content-Type: application/json; charset=utf-8');
 
     $data = [];
-    if (isset($sourceXml->shop->offers->offer)) {
-        foreach ($sourceXml->shop->offers->offer as $offer) {
+    foreach (iterateOffers($tmpFeedFile) as $offer) {
             $offerId = (string)$offer['id'];
             $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
             $isAvailable = in_array($availAttr, ['true', '1', 'yes']);
@@ -484,7 +511,6 @@ if ($type === 'prices') {
                 ],
             ];
         }
-    }
 
     $priceList = [
         'total' => count($data),
