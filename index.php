@@ -2,7 +2,7 @@
 // ==========================================
 // CONFIGURATION
 // ==========================================
-define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/484848c604e645acf084b507b84b84fc.xml');
+define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/4a43a19c091ae5746f169a42f86464c9.xml');
 
 ini_set('memory_limit', '512M');
 set_time_limit(120);
@@ -133,6 +133,14 @@ $FORBIDDEN_KEYWORDS = [
     'консультац', 'шоурум', 'магазин',
 ];
 
+// A paragraph mentioning a currency amount ("+2170 грн", "-3640 грн") is
+// always configuration/option pricing that leaked into the description --
+// this never belongs there (price lives in the separate price-list feed,
+// not as free text), so it's removed regardless of the heading above it.
+function containsPriceAmount($text) {
+    return (bool)preg_match('/\d+\s*(грн|₴|uah)\b/ui', $text);
+}
+
 function containsForbidden($text, $keywords) {
     $low = mb_strtolower($text);
     foreach ($keywords as $kw) {
@@ -176,15 +184,23 @@ function cleanDescription($html, $forbiddenKeywords) {
         }
     }
 
-    // Remove any remaining <p>/<div> whose own text mentions a forbidden topic.
+    // Remove any remaining <p>/<div> whose own text mentions a forbidden
+    // topic. IMPORTANT: never match against $root itself -- $root's
+    // aggregated textContent includes EVERY descendant's text (including
+    // heading titles), so checking it against the same keyword list can
+    // catastrophically wipe the entire description if a keyword merely
+    // appears anywhere at all in the document (e.g. inside a heading like
+    // "Додаткові опції:").
     $blocks = [];
     foreach (['p', 'div'] as $tag) {
-        foreach ($doc->getElementsByTagName($tag) as $b) $blocks[] = $b;
+        foreach ($doc->getElementsByTagName($tag) as $b) {
+            if ($b !== $root) $blocks[] = $b;
+        }
     }
     foreach ($blocks as $b) {
         if (!$b->parentNode) continue;
         $text = trim($b->textContent);
-        if ($text !== '' && containsForbidden($text, $forbiddenKeywords)) {
+        if ($text !== '' && (containsForbidden($text, $forbiddenKeywords) || containsPriceAmount($text))) {
             $b->parentNode->removeChild($b);
         }
     }
@@ -197,6 +213,23 @@ function cleanDescription($html, $forbiddenKeywords) {
             $h5 = $doc->createElement('h5');
             while ($n->firstChild) $h5->appendChild($n->firstChild);
             $n->parentNode->replaceChild($h5, $n);
+        }
+    }
+
+    // Drop any heading that no longer has content under it (its
+    // paragraphs got removed above, e.g. "Додаткові опції:" once all the
+    // priced option lines beneath it are gone).
+    $headingsNow = [];
+    foreach ($doc->getElementsByTagName('h5') as $h) $headingsNow[] = $h;
+    foreach ($headingsNow as $h) {
+        if (!$h->parentNode) continue;
+        $sibling = $h->nextSibling;
+        while ($sibling && $sibling->nodeType === XML_TEXT_NODE && trim($sibling->textContent) === '') {
+            $sibling = $sibling->nextSibling;
+        }
+        $hasContent = $sibling && !($sibling->nodeType === XML_ELEMENT_NODE && $sibling->tagName === 'h5');
+        if (!$hasContent) {
+            $h->parentNode->removeChild($h);
         }
     }
 
