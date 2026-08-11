@@ -502,8 +502,15 @@ if ($type === 'prices') {
     $data = [];
     foreach (iterateOffers($tmpFeedFile) as $offer) {
             $offerId = (string)$offer['id'];
+            $categoryIdSrc = isset($offer->categoryId) ? (string)$offer->categoryId : '';
             $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
             $isAvailable = in_array($availAttr, ['true', '1', 'yes']);
+            // Beds (category 1059) are not ready for orders yet -- force
+            // them to always show as unavailable in the price feed,
+            // regardless of what the source feed says.
+            if ($categoryIdSrc === '1059') {
+                $isAvailable = false;
+            }
 
             $price = isset($offer->price) ? (int)$offer->price : null;
             $oldPrice = isset($offer->oldprice) ? (int)$offer->oldprice : null;
