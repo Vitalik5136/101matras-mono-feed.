@@ -3,6 +3,7 @@
 // CONFIGURATION
 // ==========================================
 define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/4a43a19c091ae5746f169a42f86464c9.xml');
+define('SUPPLIER_STOCK_CSV_URL', 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGcRlGkFyXq5e7fp6crNoKM3iOyp7A96vCHGjTBvK_FJz0uHXkkf8kqUCFPkAbHBPHWDM_aHcqeClU/pub?gid=1912985661&single=true&output=tsv');
 
 ini_set('memory_limit', '512M');
 set_time_limit(120);
@@ -372,6 +373,81 @@ function warrantyMonths($text) {
     return 0;
 }
 
+// ==========================================
+// Supplier stock matching (mattresses only)
+// ==========================================
+// The supplier's stock spreadsheet has no shared article/SKU with our
+// catalog -- only free-text model names ("FORTUNA FDM MATTRESS 90*200cm").
+// We match by (model keyword, size) instead. This is inherently fuzzier
+// than matching by code, but it's the best available signal given what
+// the supplier provides.
+
+function extractSizeKey($text) {
+    if (preg_match('/(\d{2,3})\s*[*xхX×]\s*(\d{2,3})/u', $text ?? '', $m)) {
+        $a = (int)$m[1];
+        $b = (int)$m[2];
+        return $a < $b ? "$a-$b" : "$b-$a"; // order-independent (90x200 == 200x90)
+    }
+    return null;
+}
+
+// Words that appear in nearly every row/title and carry no product-model
+// identity, so they must never be used as the matching key.
+const SUPPLIER_MATCH_STOPWORDS = ['MATTRESS', 'TM', 'FDM', 'SILENCE', 'МАТРАЦ', 'МАТРАС'];
+
+function extractSignificantWords($text) {
+    preg_match_all('/[A-Za-zА-Яа-яІіЇїЄєҐґ]{3,}/u', $text ?? '', $m);
+    $out = [];
+    foreach ($m[0] as $w) {
+        $up = mb_strtoupper($w);
+        if (!in_array($up, SUPPLIER_MATCH_STOPWORDS)) $out[] = $up;
+    }
+    return $out;
+}
+
+// Downloads and parses the supplier's stock CSV (a Google Sheets "publish
+// to web as CSV" link -- see the setup instructions). Group/subtotal rows
+// (e.g. "FDM ТМ", "ИТОГО:") have no WxH size in them and are skipped
+// automatically. Returns [(model, sizeKey) => freeStockQty, ...], or an
+// empty array if the URL isn't configured or the fetch fails (callers
+// treat that the same as "no match found" for every offer).
+function loadSupplierStock($url) {
+    $map = [];
+    if (!$url) return $map;
+    $csv = @file_get_contents($url);
+    if ($csv === false) return $map;
+    $lines = preg_split('/\r\n|\r|\n/', $csv);
+    foreach ($lines as $line) {
+        if (trim($line) === '') continue;
+        $cols = str_getcsv($line, "\t"); // published sheet is tab-separated (TSV)
+        $name = $cols[0] ?? '';
+        $sizeKey = extractSizeKey($name);
+        if ($sizeKey === null) continue; // group/subtotal/total row -- skip
+        $words = extractSignificantWords($name);
+        if (empty($words)) continue;
+        $model = $words[0]; // supplier's own naming reliably puts the model word first
+        $freeStock = isset($cols[3]) && is_numeric(trim($cols[3])) ? (int)$cols[3] : 0;
+        $map["$model|$sizeKey"] = max(0, $freeStock);
+    }
+    return $map;
+}
+
+// Looks up a catalog offer's title in the supplier stock map. Tries every
+// significant word in the title (not just the first) against the map,
+// since our catalog's word order differs from the supplier's ("Матрац FDM
+// Fortuna 90х200" vs "FORTUNA FDM MATTRESS 90*200cm"). Returns the real
+// free-stock quantity if found, or null if this product has no
+// corresponding row in the supplier's file.
+function lookupSupplierStock($title, $supplierStock) {
+    $sizeKey = extractSizeKey($title);
+    if ($sizeKey === null) return null;
+    foreach (extractSignificantWords($title) as $w) {
+        $key = "$w|$sizeKey";
+        if (isset($supplierStock[$key])) return $supplierStock[$key];
+    }
+    return null;
+}
+
 $categoryHasChildren = [];
 
 // ==========================================
@@ -499,6 +575,8 @@ if ($type === 'catalog') {
 if ($type === 'prices') {
     header('Content-Type: application/json; charset=utf-8');
 
+    $supplierStock = loadSupplierStock(SUPPLIER_STOCK_CSV_URL);
+
     $data = [];
     foreach (iterateOffers($tmpFeedFile) as $offer) {
             $offerId = (string)$offer['id'];
@@ -510,6 +588,28 @@ if ($type === 'prices') {
             // regardless of what the source feed says.
             if ($categoryIdSrc === '1059') {
                 $isAvailable = false;
+            }
+
+            // "Розмір під замовлення" (custom/made-to-order size) variants
+            // exist for every mattress but aren't real purchasable stock --
+            // force these to unavailable regardless of category or what
+            // the source feed (or the supplier stock match below) says.
+            $titleForCustomSizeCheck = isset($offer->name) ? (string)$offer->name : '';
+            $isCustomSizeOrder = mb_stripos($titleForCustomSizeCheck, 'під замовлення') !== false
+                || mb_stripos($titleForCustomSizeCheck, 'под заказ') !== false;
+            if ($isCustomSizeOrder) {
+                $isAvailable = false;
+            }
+
+            // Mattresses (category 1061): override with the supplier's
+            // real stock quantity when we can match this offer's title to
+            // a row in their stock sheet. If no match is found, the
+            // product shows as unavailable rather than guessing.
+            $realStock = null;
+            if ($categoryIdSrc === '1061' && !$isCustomSizeOrder) {
+                $titleForMatch = isset($offer->name) ? (string)$offer->name : '';
+                $realStock = lookupSupplierStock($titleForMatch, $supplierStock);
+                $isAvailable = $realStock !== null && $realStock > 0;
             }
 
             $price = isset($offer->price) ? (int)$offer->price : null;
@@ -542,11 +642,11 @@ if ($type === 'prices') {
                 'warranty_period' => $warrantyMonthsVal,
                 'max_pay_in_parts' => $maxPayInParts,
                 'days_to_dispatch' => $isAvailable ? 3 : 30, // in stock -> 3 days, out of stock -> 30 days
-                'stock' => $isAvailable ? 10 : 0,  // no real quantity in source -- placeholder based on availability
+                'stock' => $realStock ?? ($isAvailable ? 10 : 0), // mattresses: real supplier qty when matched; others: placeholder
                 'warehouses' => [
                     [
                         'id' => 'Main',
-                        'stock' => $isAvailable ? 10 : 0,
+                        'stock' => $realStock ?? ($isAvailable ? 10 : 0),
                     ],
                 ],
             ];
