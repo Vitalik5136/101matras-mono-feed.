@@ -2,7 +2,7 @@
 // ==========================================
 // CONFIGURATION
 // ==========================================
-define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/4a43a19c091ae5746f169a42f86464c9.xml');
+define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/bf5ada79a4036e96ecc39bc3173ff7a2.xml');
 define('SUPPLIER_STOCK_CSV_URL', 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGcRlGkFyXq5e7fp6crNoKM3iOyp7A96vCHGjTBvK_FJz0uHXkkf8kqUCFPkAbHBPHWDM_aHcqeClU/pub?gid=1912985661&single=true&output=tsv');
 
 ini_set('memory_limit', '512M');
@@ -618,6 +618,19 @@ if ($type === 'prices') {
                 $realStock = lookupSupplierStock($titleForMatch, $supplierStock);
                 $mattressMatched = $realStock !== null;
                 $isAvailable = true; // always show mattresses as available (except custom-size, handled above); days_to_dispatch below reflects the real supplier signal
+            }
+
+            // Brand exception: Billerbeck does NOT follow the "always
+            // available" rule above -- it strictly follows Horoshop's own
+            // availability flag (in stock -> available, out of stock ->
+            // unavailable), same as before that rule existed. This still
+            // yields to the custom-size rule above.
+            $brandForCheck = isset($offer->vendor) ? (string)$offer->vendor : '';
+            $isBillerbeck = mb_stripos($brandForCheck, 'billerbeck') !== false
+                || mb_stripos($brandForCheck, 'біллербек') !== false
+                || mb_stripos($brandForCheck, 'биллербек') !== false;
+            if ($isBillerbeck && !$isCustomSizeOrder) {
+                $isAvailable = $horoshopAvailable;
             }
 
             $price = isset($offer->price) ? (int)$offer->price : null;
