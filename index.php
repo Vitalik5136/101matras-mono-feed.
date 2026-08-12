@@ -472,6 +472,7 @@ if ($type === 'catalog') {
     foreach (iterateOffers($tmpFeedFile) as $offer) {
             $offerId = (string)$offer['id'];
             $categoryIdSrc = isset($offer->categoryId) ? (string)$offer->categoryId : '';
+            if ($categoryIdSrc === '1059') continue; // beds removed from the feed entirely, per agreement with Мономаркет
             $vendorCode = isset($offer->vendorCode) ? (string)$offer->vendorCode : '';
             $brand = isset($offer->vendor) ? (string)$offer->vendor : '';
             $titleRaw = isset($offer->name) ? (string)$offer->name : '';
@@ -581,14 +582,9 @@ if ($type === 'prices') {
     foreach (iterateOffers($tmpFeedFile) as $offer) {
             $offerId = (string)$offer['id'];
             $categoryIdSrc = isset($offer->categoryId) ? (string)$offer->categoryId : '';
+            if ($categoryIdSrc === '1059') continue; // beds removed from the feed entirely, per agreement with Мономаркет
             $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
             $isAvailable = in_array($availAttr, ['true', '1', 'yes']);
-            // Beds (category 1059) are not ready for orders yet -- force
-            // them to always show as unavailable in the price feed,
-            // regardless of what the source feed says.
-            if ($categoryIdSrc === '1059') {
-                $isAvailable = false;
-            }
 
             // "Розмір під замовлення" (custom/made-to-order size) variants
             // exist for every mattress but aren't real purchasable stock --
