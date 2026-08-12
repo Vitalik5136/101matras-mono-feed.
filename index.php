@@ -590,7 +590,11 @@ if ($type === 'prices') {
             $categoryIdSrc = isset($offer->categoryId) ? (string)$offer->categoryId : '';
             if ($categoryIdSrc === '1059') continue; // beds removed from the feed entirely, per agreement with Мономаркет
             $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
-            $isAvailable = in_array($availAttr, ['true', '1', 'yes']);
+            $horoshopAvailable = in_array($availAttr, ['true', '1', 'yes']);
+            // If Horoshop says "not in stock", we no longer hide the
+            // product as unavailable -- we still show it as available,
+            // just with a longer dispatch time (12 days instead of 3).
+            $isAvailable = true;
 
             // "Розмір під замовлення" (custom/made-to-order size) variants
             // exist for every mattress but aren't real purchasable stock --
@@ -608,10 +612,12 @@ if ($type === 'prices') {
             // a row in their stock sheet. If no match is found, the
             // product shows as unavailable rather than guessing.
             $realStock = null;
+            $mattressMatched = false;
             if ($categoryIdSrc === '1061' && !$isCustomSizeOrder) {
                 $titleForMatch = isset($offer->name) ? (string)$offer->name : '';
                 $realStock = lookupSupplierStock($titleForMatch, $supplierStock);
-                $isAvailable = $realStock !== null && $realStock > 0;
+                $mattressMatched = $realStock !== null;
+                $isAvailable = $mattressMatched && $realStock > 0;
             }
 
             $price = isset($offer->price) ? (int)$offer->price : null;
@@ -635,6 +641,18 @@ if ($type === 'prices') {
                 }
             }
 
+            // Dispatch time:
+            // - custom/made-to-order size -> always 30 (unchanged)
+            // - matched mattress -> 3 if the supplier confirms stock, else 12
+            // - everything else -> 3 if Horoshop's own flag says in stock, else 12
+            if ($isCustomSizeOrder) {
+                $daysToDispatch = 30;
+            } elseif ($mattressMatched) {
+                $daysToDispatch = $isAvailable ? 3 : 12;
+            } else {
+                $daysToDispatch = $horoshopAvailable ? 3 : 12;
+            }
+
             $data[] = [
                 'code' => $offerId,
                 'price' => $price,
@@ -643,7 +661,7 @@ if ($type === 'prices') {
                 'warranty_type' => $warrantyMonthsVal > 0 ? 'manufacturer' : 'no',
                 'warranty_period' => $warrantyMonthsVal,
                 'max_pay_in_parts' => $maxPayInParts,
-                'days_to_dispatch' => $isAvailable ? 3 : ($isCustomSizeOrder ? 30 : 12), // in stock -> 3, custom/made-to-order size -> 30 (unchanged), other out-of-stock -> 12
+                'days_to_dispatch' => $daysToDispatch,
                 'stock' => $realStock ?? ($isAvailable ? 10 : 0), // mattresses: real supplier qty when matched; others: placeholder
                 'warehouses' => [
                     [
