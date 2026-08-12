@@ -675,11 +675,11 @@ if ($type === 'prices') {
                 'warranty_period' => $warrantyMonthsVal,
                 'max_pay_in_parts' => $maxPayInParts,
                 'days_to_dispatch' => $daysToDispatch,
-                'stock' => $realStock ?? ($isAvailable ? 10 : 0), // mattresses: real supplier qty when matched; others: placeholder
+                'stock' => ($realStock !== null && $realStock > 0) ? $realStock : ($isAvailable ? 10 : 0), // positive supplier qty when confirmed; otherwise placeholder while still shown as available
                 'warehouses' => [
                     [
                         'id' => 'Main',
-                        'stock' => $realStock ?? ($isAvailable ? 10 : 0),
+                        'stock' => ($realStock !== null && $realStock > 0) ? $realStock : ($isAvailable ? 10 : 0),
                     ],
                 ],
             ];
