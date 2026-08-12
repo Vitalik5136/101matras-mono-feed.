@@ -617,7 +617,7 @@ if ($type === 'prices') {
                 $titleForMatch = isset($offer->name) ? (string)$offer->name : '';
                 $realStock = lookupSupplierStock($titleForMatch, $supplierStock);
                 $mattressMatched = $realStock !== null;
-                $isAvailable = $mattressMatched && $realStock > 0;
+                $isAvailable = true; // always show mattresses as available (except custom-size, handled above); days_to_dispatch below reflects the real supplier signal
             }
 
             $price = isset($offer->price) ? (int)$offer->price : null;
@@ -648,7 +648,7 @@ if ($type === 'prices') {
             if ($isCustomSizeOrder) {
                 $daysToDispatch = 30;
             } elseif ($mattressMatched) {
-                $daysToDispatch = $isAvailable ? 3 : 12;
+                $daysToDispatch = $realStock > 0 ? 3 : 12;
             } else {
                 $daysToDispatch = $horoshopAvailable ? 3 : 12;
             }
