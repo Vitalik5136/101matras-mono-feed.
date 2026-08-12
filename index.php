@@ -641,7 +641,7 @@ if ($type === 'prices') {
                 'warranty_type' => $warrantyMonthsVal > 0 ? 'manufacturer' : 'no',
                 'warranty_period' => $warrantyMonthsVal,
                 'max_pay_in_parts' => $maxPayInParts,
-                'days_to_dispatch' => $isAvailable ? 3 : 30, // in stock -> 3 days, out of stock -> 30 days
+                'days_to_dispatch' => $isAvailable ? 3 : ($isCustomSizeOrder ? 30 : 12), // in stock -> 3, custom/made-to-order size -> 30 (unchanged), other out-of-stock -> 12
                 'stock' => $realStock ?? ($isAvailable ? 10 : 0), // mattresses: real supplier qty when matched; others: placeholder
                 'warehouses' => [
                     [
