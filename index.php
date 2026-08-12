@@ -52,6 +52,8 @@ $fetchError = '';
 if (!downloadFeedToFile(HOROSHOP_FEED_URL, $tmpFeedFile, $fetchError)) {
     http_response_code(500);
     header('Content-Type: application/xml; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
     echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<error>Error fetching source Horoshop XML feed. Details: " . htmlspecialchars($fetchError) . "</error>";
     exit;
 }
@@ -455,6 +457,8 @@ $categoryHasChildren = [];
 // ==========================================
 if ($type === 'catalog') {
     header('Content-Type: application/xml; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
 
     // Stream the output with XMLWriter instead of building one giant
     // SimpleXMLElement tree in memory -- for a large catalog, holding the
@@ -575,6 +579,8 @@ if ($type === 'catalog') {
 // ==========================================
 if ($type === 'prices') {
     header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
 
     $supplierStock = loadSupplierStock(SUPPLIER_STOCK_CSV_URL);
 
@@ -660,4 +666,6 @@ if ($type === 'prices') {
 
 http_response_code(400);
 header('Content-Type: application/xml; charset=utf-8');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
 echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<error>Invalid type parameter. Use ?type=catalog or ?type=prices</error>";
