@@ -601,8 +601,10 @@ if ($type === 'prices') {
             // force these to unavailable regardless of category or what
             // the source feed (or the supplier stock match below) says.
             $titleForCustomSizeCheck = isset($offer->name) ? (string)$offer->name : '';
-            $isCustomSizeOrder = mb_stripos($titleForCustomSizeCheck, 'під замовлення') !== false
+            $isCustomSizeOrder = mb_stripos($titleForCustomSizeCheck, 'під замов') !== false // catches "під замовлення" even truncated to "під замов" (Horoshop cuts long titles)
+                || mb_stripos($titleForCustomSizeCheck, 'розмір під замовлення') !== false
                 || mb_stripos($titleForCustomSizeCheck, 'под заказ') !== false
+                || mb_stripos($titleForCustomSizeCheck, 'размер под') !== false
                 || mb_stripos($titleForCustomSizeCheck, 'нестандарт') !== false
                 || mb_stripos($titleForCustomSizeCheck, 'ціна за м2') !== false
                 || mb_stripos($titleForCustomSizeCheck, 'цена за м2') !== false;
