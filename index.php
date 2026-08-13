@@ -602,7 +602,10 @@ if ($type === 'prices') {
             // the source feed (or the supplier stock match below) says.
             $titleForCustomSizeCheck = isset($offer->name) ? (string)$offer->name : '';
             $isCustomSizeOrder = mb_stripos($titleForCustomSizeCheck, 'під замовлення') !== false
-                || mb_stripos($titleForCustomSizeCheck, 'под заказ') !== false;
+                || mb_stripos($titleForCustomSizeCheck, 'под заказ') !== false
+                || mb_stripos($titleForCustomSizeCheck, 'нестандарт') !== false
+                || mb_stripos($titleForCustomSizeCheck, 'ціна за м2') !== false
+                || mb_stripos($titleForCustomSizeCheck, 'цена за м2') !== false;
             if ($isCustomSizeOrder) {
                 $isAvailable = false;
             }
