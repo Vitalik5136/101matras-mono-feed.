@@ -669,6 +669,18 @@ if ($type === 'prices') {
                 $daysToDispatch = $horoshopAvailable ? 3 : 12;
             }
 
+            // Brand exception: Eurosleep always ships in 10 days, regardless
+            // of stock/availability signals -- yields only to the
+            // custom-size rule above.
+            $isEuroslip = mb_stripos($brandForCheck, 'eurosleep') !== false
+                || mb_stripos($brandForCheck, 'euroslip') !== false
+                || mb_stripos($brandForCheck, 'euro slip') !== false
+                || mb_stripos($brandForCheck, 'єврослип') !== false
+                || mb_stripos($brandForCheck, 'еврослип') !== false;
+            if ($isEuroslip && !$isCustomSizeOrder) {
+                $daysToDispatch = 8;
+            }
+
             $data[] = [
                 'code' => $offerId,
                 'price' => $price,
