@@ -681,6 +681,15 @@ if ($type === 'prices') {
                 $daysToDispatch = 8;
             }
 
+            // Manufacturer exception: EMM (covers all their mattress
+            // brands, e.g. "EMM Melange") ships in 10 days when the
+            // product is available -- when it's not available, the
+            // existing logic above (12 days, etc.) still applies.
+            $isEmm = mb_stripos($brandForCheck, 'emm') !== false;
+            if ($isEmm && !$isCustomSizeOrder && $isAvailable) {
+                $daysToDispatch = 10;
+            }
+
             $data[] = [
                 'code' => $offerId,
                 'price' => $price,
