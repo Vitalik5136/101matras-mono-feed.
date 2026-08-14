@@ -625,15 +625,17 @@ if ($type === 'prices') {
                 $isAvailable = true; // always show mattresses as available (except custom-size, handled above); days_to_dispatch below reflects the real supplier signal
             }
 
-            // Brand exception: Billerbeck is always shown as unavailable,
-            // regardless of what Horoshop or the mattress-supplier match
-            // says. This still yields to the custom-size rule above.
             $brandForCheck = isset($offer->vendor) ? (string)$offer->vendor : '';
+
+            // Brand exception: Billerbeck strictly follows Horoshop's own
+            // availability flag -- in stock -> available (3 days),
+            // out of stock -> fully unavailable (not shown as available
+            // at all). This still yields to the custom-size rule above.
             $isBillerbeck = mb_stripos($brandForCheck, 'billerbeck') !== false
                 || mb_stripos($brandForCheck, 'біллербек') !== false
                 || mb_stripos($brandForCheck, 'биллербек') !== false;
             if ($isBillerbeck && !$isCustomSizeOrder) {
-                $isAvailable = false;
+                $isAvailable = $horoshopAvailable;
             }
 
             $price = isset($offer->price) ? (int)$offer->price : null;
@@ -679,15 +681,6 @@ if ($type === 'prices') {
                 || mb_stripos($brandForCheck, 'еврослип') !== false;
             if ($isEuroslip && !$isCustomSizeOrder) {
                 $daysToDispatch = 8;
-            }
-
-            // Manufacturer exception: EMM (covers all their mattress
-            // brands, e.g. "EMM Melange") ships in 10 days when the
-            // product is available -- when it's not available, the
-            // existing logic above (12 days, etc.) still applies.
-            $isEmm = mb_stripos($brandForCheck, 'emm') !== false;
-            if ($isEmm && !$isCustomSizeOrder && $isAvailable) {
-                $daysToDispatch = 10;
             }
 
             $data[] = [
