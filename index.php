@@ -5,11 +5,13 @@
 define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/bf5ada79a4036e96ecc39bc3173ff7a2.xml');
 define('SUPPLIER_STOCK_CSV_URL', 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGcRlGkFyXq5e7fp6crNoKM3iOyp7A96vCHGjTBvK_FJz0uHXkkf8kqUCFPkAbHBPHWDM_aHcqeClU/pub?gid=1912985661&single=true&output=tsv');
 
-// Поведінка для турецьких брендів (FDM / SILENCE), коли постачальник
-// прислав нульовий або відʼємний вільний залишок:
-//   true  -> товар лишається доступним, але з довгим строком відправки
-//   false -> товар віддається в фід як недоступний
-define('SUPPLIER_ZERO_MEANS_AVAILABLE', false);
+// Що робити, коли постачальник прислав нульовий або відʼємний вільний
+// залишок. Відʼємний = товар весь у бронях під чужі замовлення; це не
+// означає, що його немає у нас -- свого складу і магазинів постачальник
+// не бачить, а Хорошоп бачить.
+//   true  -> віддаємо позицію як недоступну (жорстко)
+//   false -> повертаємось до прапорця Хорошопа, як для решти каталогу
+define('SUPPLIER_ZERO_MEANS_UNAVAILABLE', false);
 // Строк відправки (днів) для позиції, яку постачальник підтвердив у наявності
 define('DISPATCH_IN_STOCK', 3);
 // Строк відправки для позиції без підтвердженого залишку
@@ -708,13 +710,18 @@ if ($type === 'prices') {
             if (isSupplierBrand($brandForCheck) && !$isCustomSizeOrder) {
                 $titleForMatch = isset($offer->name) ? (string)$offer->name : '';
                 $hit = lookupSupplierStock($titleForMatch, $supplierStock, $GLOBALS['SUPPLIER_SIG_ALIASES'], $GLOBALS['SUPPLIER_MODEL_ALIASES']);
-                if ($hit !== null) {
+                if ($hit !== null && $hit['qty'] > 0) {
+                    // Постачальник підтвердив вільний залишок -- беремо його число.
                     $supplierMatched = true;
-                    $realStock = max(0, $hit['qty']);   // відʼємний вільний залишок (переброня) = 0
-                    $isAvailable = ($realStock > 0) ? true : SUPPLIER_ZERO_MEANS_AVAILABLE;
+                    $realStock = $hit['qty'];
+                    $isAvailable = true;
+                } elseif ($hit !== null && SUPPLIER_ZERO_MEANS_UNAVAILABLE) {
+                    $supplierMatched = true;
+                    $realStock = 0;
+                    $isAvailable = false;
                 } else {
-                    // Моделі немає у файлі постачальника -- не вигадуємо
-                    // залишок, лишаємо поведінку за прапорцем Хорошопа.
+                    // Нуль, мінус або моделі немає у файлі -- залишок постачальника
+                    // ні про що не говорить, працюємо за прапорцем Хорошопа.
                     $isAvailable = true;
                 }
             }
