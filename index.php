@@ -5,6 +5,16 @@
 define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/bf5ada79a4036e96ecc39bc3173ff7a2.xml');
 define('SUPPLIER_STOCK_CSV_URL', 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGcRlGkFyXq5e7fp6crNoKM3iOyp7A96vCHGjTBvK_FJz0uHXkkf8kqUCFPkAbHBPHWDM_aHcqeClU/pub?gid=1912985661&single=true&output=tsv');
 
+// Поведінка для турецьких брендів (FDM / SILENCE), коли постачальник
+// прислав нульовий або відʼємний вільний залишок:
+//   true  -> товар лишається доступним, але з довгим строком відправки
+//   false -> товар віддається в фід як недоступний
+define('SUPPLIER_ZERO_MEANS_AVAILABLE', false);
+// Строк відправки (днів) для позиції, яку постачальник підтвердив у наявності
+define('DISPATCH_IN_STOCK', 3);
+// Строк відправки для позиції без підтвердженого залишку
+define('DISPATCH_NO_STOCK', 12);
+
 ini_set('memory_limit', '512M');
 set_time_limit(120);
 
@@ -376,78 +386,153 @@ function warrantyMonths($text) {
 }
 
 // ==========================================
-// Supplier stock matching (mattresses only)
+// Supplier stock matching (турецькі бренди FDM / SILENCE)
 // ==========================================
-// The supplier's stock spreadsheet has no shared article/SKU with our
-// catalog -- only free-text model names ("FORTUNA FDM MATTRESS 90*200cm").
-// We match by (model keyword, size) instead. This is inherently fuzzier
-// than matching by code, but it's the best available signal given what
-// the supplier provides.
+// У постачальника немає спільного з нами артикула -- тільки вільний текст
+// назви ("FORTUNA FDM MATTRESS 160*200cm"). Тому зіставляємо по підпису
+// моделі (набір значущих слів) + розміру.
+//
+// Чому саме набір слів, а не перше слово, як було раніше: у каталозі є
+// пари типу "Riviera" і "Riviera Premium", "Ergo Line Aveline" і
+// "Ergo Line Infiniti". Матчинг по першому слову склеював їх в один ключ
+// і підставляв залишок навмання. Набір слів + вибір кандидата з
+// найбільшим перетином цю проблему знімає.
+
+// Бренди, залишки яких приходять з файлу постачальника. Решта каталогу
+// цим файлом не керується взагалі.
+const SUPPLIER_BRANDS = ['FDM', 'SILENCE'];
+
+// Слова, які є майже в кожному рядку і не несуть ідентичності моделі.
+const SIG_STOPWORDS = [
+    'MATTRESS', 'MATRESS', 'PROTECTOR', 'TOPPER', 'PILLOW', 'SIZE', 'SET',
+    'TM', 'FDM', 'SILENCE', 'ERGO', 'LINE', 'CM',
+    'ТМ', 'СМ', 'МАТРАЦ', 'МАТРАС', 'МАТРАЦИ', 'НАМАТРАЦНИК', 'НАМАТРАСНИК',
+    'ПОДУШКА', 'ТОПЕР', 'ТОППЕР', 'ВОДОНЕПРОНИКНИЙ', 'ВОДОНЕПРОНИЦАЕМЫЙ',
+];
+
+// Ручні винятки на випадок, коли постачальник назве модель зовсім інакше,
+// ніж вона зветься у нас. Ключ -- підпис з файлу постачальника,
+// значення -- підпис з нашого каталогу. Зазвичай порожньо.
+$SUPPLIER_SIG_ALIASES = [
+    // Постачальник зве цю модель "Riviera Prime", у нас вона "Riviera Premium".
+    'PRIME' => 'PREMIUM',
+];
+
+// Коли назва розходиться цілком, а не одним словом -- замінюємо весь підпис.
+// Ключ -- підпис рядка постачальника, значення -- наш підпис.
+// Підписи -- слова ВЕЛИКИМИ літерами, за абеткою, через пробіл.
+$SUPPLIER_MODEL_ALIASES = [
+    // "Visco Top 160*200" у постачальника = "Топер FDM Gel Memory Foam Topper" у нас
+    'TOP VISCO' => 'FOAM GEL MEMORY',
+];
 
 function extractSizeKey($text) {
-    if (preg_match('/(\d{2,3})\s*[*xхX×]\s*(\d{2,3})/u', $text ?? '', $m)) {
+    if (preg_match('/(\d{2,3})\s*[*xхXХ×]\s*(\d{2,3})/u', $text ?? '', $m)) {
         $a = (int)$m[1];
         $b = (int)$m[2];
-        return $a < $b ? "$a-$b" : "$b-$a"; // order-independent (90x200 == 200x90)
+        return $a < $b ? "$a-$b" : "$b-$a"; // порядок сторін не має значення
     }
     return null;
 }
 
-// Words that appear in nearly every row/title and carry no product-model
-// identity, so they must never be used as the matching key.
-const SUPPLIER_MATCH_STOPWORDS = ['MATTRESS', 'TM', 'FDM', 'SILENCE', 'МАТРАЦ', 'МАТРАС'];
-
-function extractSignificantWords($text) {
-    preg_match_all('/[A-Za-zА-Яа-яІіЇїЄєҐґ]{3,}/u', $text ?? '', $m);
+// Набір значущих слів назви (без розміру, без стоп-слів, без чистих чисел).
+// "Матрац FDM Ergo Line Aveline 160х200 см" -> ['AVELINE']
+// "3D Premium Ultra Soft 160*200cm"         -> ['3D','PREMIUM','SOFT','ULTRA']
+function modelSignature($text) {
+    $t = preg_replace('/(\d{2,3})\s*[*xхXХ×]\s*(\d{2,3})/u', ' ', (string)$text);
+    preg_match_all('/[A-Za-zА-Яа-яІіЇїЄєҐґ0-9]{2,}/u', $t, $m);
     $out = [];
     foreach ($m[0] as $w) {
-        $up = mb_strtoupper($w);
-        if (!in_array($up, SUPPLIER_MATCH_STOPWORDS)) $out[] = $up;
+        $up = mb_strtoupper($w, 'UTF-8');
+        if (preg_match('/^\d+$/', $up)) continue;          // чисті числа (роки, 3D залишається)
+        if (in_array($up, SIG_STOPWORDS, true)) continue;
+        $out[$up] = true;
     }
-    return $out;
+    $keys = array_keys($out);
+    sort($keys);
+    return $keys;
 }
 
-// Downloads and parses the supplier's stock CSV (a Google Sheets "publish
-// to web as CSV" link -- see the setup instructions). Group/subtotal rows
-// (e.g. "FDM ТМ", "ИТОГО:") have no WxH size in them and are skipped
-// automatically. Returns [(model, sizeKey) => freeStockQty, ...], or an
-// empty array if the URL isn't configured or the fetch fails (callers
-// treat that the same as "no match found" for every offer).
-function loadSupplierStock($url) {
-    $map = [];
-    if (!$url) return $map;
+// Читає TSV постачальника (Google Sheets "опублікувати у вебі").
+// Рядки-заголовки груп і підсумків відсіюються автоматично.
+// Повертає список записів: sig, size, qty, raw.
+function loadSupplierStock($url, &$error = '') {
+    $rows = [];
+    if (!$url) { $error = 'SUPPLIER_STOCK_CSV_URL не заданий'; return $rows; }
     $csv = @file_get_contents($url);
-    if ($csv === false) return $map;
-    $lines = preg_split('/\r\n|\r|\n/', $csv);
-    foreach ($lines as $line) {
+    if ($csv === false) { $error = 'не вдалося завантажити таблицю залишків'; return $rows; }
+    foreach (preg_split('/\r\n|\r|\n/', $csv) as $line) {
         if (trim($line) === '') continue;
-        $cols = str_getcsv($line, "\t"); // published sheet is tab-separated (TSV)
-        $name = $cols[0] ?? '';
-        $sizeKey = extractSizeKey($name);
-        if ($sizeKey === null) continue; // group/subtotal/total row -- skip
-        $words = extractSignificantWords($name);
-        if (empty($words)) continue;
-        $model = $words[0]; // supplier's own naming reliably puts the model word first
-        $freeStock = isset($cols[3]) && is_numeric(trim($cols[3])) ? (int)$cols[3] : 0;
-        $map["$model|$sizeKey"] = max(0, $freeStock);
+        $cols = str_getcsv($line, "\t");
+        $name = trim($cols[0] ?? '');
+        if ($name === '') continue;
+        $sig = modelSignature($name);
+        if (empty($sig)) continue;                 // рядок групи / підсумку
+        $size = extractSizeKey($name);             // null -> позиція без розміру (подушка)
+
+        // Вільний залишок -- колонка D. Якщо там порожньо або текст,
+        // рахуємо самі: Залишок (B) мінус Заброньовано (C).
+        // Пʼята колонка (E) свідомо ігнорується -- її призначення не
+        // підтверджене постачальником.
+        $free = null;
+        if (isset($cols[3]) && is_numeric(str_replace([' ', ','], ['', '.'], trim($cols[3])))) {
+            $free = (float)str_replace([' ', ','], ['', '.'], trim($cols[3]));
+        } elseif (isset($cols[1], $cols[2]) && is_numeric(trim($cols[1]))) {
+            $free = (float)trim($cols[1]) - (float)(is_numeric(trim($cols[2])) ? trim($cols[2]) : 0);
+        }
+        if ($free === null) continue;
+
+        $rows[] = [
+            'sig'  => $sig,
+            'size' => $size,
+            'qty'  => (int)round($free),   // відʼємні НЕ обрізаємо тут -- це робить споживач
+            'raw'  => $name,
+        ];
     }
-    return $map;
+    return $rows;
 }
 
-// Looks up a catalog offer's title in the supplier stock map. Tries every
-// significant word in the title (not just the first) against the map,
-// since our catalog's word order differs from the supplier's ("Матрац FDM
-// Fortuna 90х200" vs "FORTUNA FDM MATTRESS 90*200cm"). Returns the real
-// free-stock quantity if found, or null if this product has no
-// corresponding row in the supplier's file.
-function lookupSupplierStock($title, $supplierStock) {
+// Шукає рядок постачальника для конкретної позиції каталогу.
+// Правило одне: той самий розмір + той самий підпис моделі (після
+// підстановки алясів). Нічого не вгадуємо. Повертає
+// ['qty'=>int,'raw'=>string] або null.
+function lookupSupplierStock($title, $supplierRows, $aliases = [], $modelAliases = []) {
     $sizeKey = extractSizeKey($title);
-    if ($sizeKey === null) return null;
-    foreach (extractSignificantWords($title) as $w) {
-        $key = "$w|$sizeKey";
-        if (isset($supplierStock[$key])) return $supplierStock[$key];
+    $sig = modelSignature($title);
+    if (empty($sig)) return null;
+
+    // 1) точний збіг підпису -- найнадійніший випадок і головний захист
+    //    від пари "Riviera" / "Riviera Premium": для "Riviera" точний
+    //    рядок існує, тому до нечіткого етапу справа не доходить.
+    foreach ($supplierRows as $row) {
+        if ($row['size'] !== $sizeKey) continue;
+        $rowSig = $row['sig'];
+        foreach ($rowSig as $i => $w) {
+            if (isset($aliases[$w])) $rowSig[$i] = $aliases[$w];
+        }
+        sort($rowSig);
+        $joined = implode(' ', $rowSig);
+        if (isset($modelAliases[$joined])) {
+            $rowSig = explode(' ', $modelAliases[$joined]);
+            sort($rowSig);
+        }
+        if ($rowSig === $sig) return ['qty' => $row['qty'], 'raw' => $row['raw']];
     }
+
+    // Точного збігу немає -- залишку не буде. Свідомо не вгадуємо:
+    // нечіткий пошук по підмножині слів на реальних даних дав хибний матч
+    // ("Riviera Premium 160x200" підхопив залишок звичайної "Riviera",
+    // бо слово PREMIUM просто не мало пари). Краще лишити позицію без
+    // залишку, ніж проставити чужий. Нові розбіжності лікуються
+    // додаванням рядка у $SUPPLIER_SIG_ALIASES вище.
     return null;
+}
+
+function isSupplierBrand($vendor) {
+    foreach (SUPPLIER_BRANDS as $b) {
+        if (mb_strtoupper(trim((string)$vendor), 'UTF-8') === $b) return true;
+    }
+    return false;
 }
 
 $categoryHasChildren = [];
@@ -582,7 +667,8 @@ if ($type === 'prices') {
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     header('Pragma: no-cache');
 
-    $supplierStock = loadSupplierStock(SUPPLIER_STOCK_CSV_URL);
+    $supplierErr = '';
+    $supplierStock = loadSupplierStock(SUPPLIER_STOCK_CSV_URL, $supplierErr);
 
     $data = [];
     foreach (iterateOffers($tmpFeedFile) as $offer) {
@@ -612,20 +698,26 @@ if ($type === 'prices') {
                 $isAvailable = false;
             }
 
-            // Mattresses (category 1061): override with the supplier's
-            // real stock quantity when we can match this offer's title to
-            // a row in their stock sheet. If no match is found, the
-            // product shows as unavailable rather than guessing.
-            $realStock = null;
-            $mattressMatched = false;
-            if ($categoryIdSrc === '1061' && !$isCustomSizeOrder) {
-                $titleForMatch = isset($offer->name) ? (string)$offer->name : '';
-                $realStock = lookupSupplierStock($titleForMatch, $supplierStock);
-                $mattressMatched = $realStock !== null;
-                $isAvailable = true; // always show mattresses as available (except custom-size, handled above); days_to_dispatch below reflects the real supplier signal
-            }
-
+            // Турецькі бренди (FDM / SILENCE): наявність береться з файлу
+            // постачальника -- і тільки наявність, ціна завжди з Хорошопа.
+            // Позиції інших брендів файл постачальника не знає, тому їх
+            // логіка лишається такою, як була (наявність з Хорошопа).
             $brandForCheck = isset($offer->vendor) ? (string)$offer->vendor : '';
+            $realStock = null;
+            $supplierMatched = false;
+            if (isSupplierBrand($brandForCheck) && !$isCustomSizeOrder) {
+                $titleForMatch = isset($offer->name) ? (string)$offer->name : '';
+                $hit = lookupSupplierStock($titleForMatch, $supplierStock, $GLOBALS['SUPPLIER_SIG_ALIASES'], $GLOBALS['SUPPLIER_MODEL_ALIASES']);
+                if ($hit !== null) {
+                    $supplierMatched = true;
+                    $realStock = max(0, $hit['qty']);   // відʼємний вільний залишок (переброня) = 0
+                    $isAvailable = ($realStock > 0) ? true : SUPPLIER_ZERO_MEANS_AVAILABLE;
+                } else {
+                    // Моделі немає у файлі постачальника -- не вигадуємо
+                    // залишок, лишаємо поведінку за прапорцем Хорошопа.
+                    $isAvailable = true;
+                }
+            }
 
             // Brand exception: Billerbeck strictly follows Horoshop's own
             // availability flag -- in stock -> available (3 days),
@@ -665,10 +757,10 @@ if ($type === 'prices') {
             // - everything else -> 3 if Horoshop's own flag says in stock, else 12
             if ($isCustomSizeOrder) {
                 $daysToDispatch = 30;
-            } elseif ($mattressMatched) {
-                $daysToDispatch = $realStock > 0 ? 3 : 12;
+            } elseif ($supplierMatched) {
+                $daysToDispatch = $realStock > 0 ? DISPATCH_IN_STOCK : DISPATCH_NO_STOCK;
             } else {
-                $daysToDispatch = $horoshopAvailable ? 3 : 12;
+                $daysToDispatch = $horoshopAvailable ? DISPATCH_IN_STOCK : DISPATCH_NO_STOCK;
             }
 
             // Brand exception: Eurosleep always ships in 10 days, regardless
@@ -683,6 +775,14 @@ if ($type === 'prices') {
                 $daysToDispatch = 8;
             }
 
+            // Реальна кількість -- тільки для підтверджених постачальником
+            // позицій. Для решти каталогу лишається старий плейсхолдер.
+            if ($supplierMatched) {
+                $stockOut = $realStock;
+            } else {
+                $stockOut = $isAvailable ? 10 : 0;
+            }
+
             $data[] = [
                 'code' => $offerId,
                 'price' => $price,
@@ -692,11 +792,11 @@ if ($type === 'prices') {
                 'warranty_period' => $warrantyMonthsVal,
                 'max_pay_in_parts' => $maxPayInParts,
                 'days_to_dispatch' => $daysToDispatch,
-                'stock' => ($realStock !== null && $realStock > 0) ? $realStock : ($isAvailable ? 10 : 0), // positive supplier qty when confirmed; otherwise placeholder while still shown as available
+                'stock' => $stockOut,
                 'warehouses' => [
                     [
                         'id' => 'Main',
-                        'stock' => ($realStock !== null && $realStock > 0) ? $realStock : ($isAvailable ? 10 : 0),
+                        'stock' => $stockOut,
                     ],
                 ],
             ];
@@ -712,8 +812,73 @@ if ($type === 'prices') {
     exit;
 }
 
+// ==========================================
+// type=stockcheck -- діагностика зіставлення (не для Мономаркета)
+// ==========================================
+// Показує, які позиції FDM / SILENCE зійшлися з файлом постачальника,
+// а які ні. Відкривати вручну після кожного нового файлу залишків.
+if ($type === 'stockcheck') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+
+    $supplierErr = '';
+    $supplierStock = loadSupplierStock(SUPPLIER_STOCK_CSV_URL, $supplierErr);
+
+    $matched = [];
+    $unmatched = [];
+    $usedRaw = [];
+    foreach (iterateOffers($tmpFeedFile) as $offer) {
+        $vendor = isset($offer->vendor) ? (string)$offer->vendor : '';
+        if (!isSupplierBrand($vendor)) continue;
+        $title = isset($offer->name) ? (string)$offer->name : '';
+        $code  = isset($offer->vendorCode) ? (string)$offer->vendorCode : '';
+        $hit = lookupSupplierStock($title, $supplierStock, $GLOBALS['SUPPLIER_SIG_ALIASES'], $GLOBALS['SUPPLIER_MODEL_ALIASES']);
+        if ($hit !== null) {
+            $usedRaw[$hit['raw']] = true;
+            $matched[] = [
+                'vendor_code'   => $code,
+                'title'         => $title,
+                'supplier_row'  => $hit['raw'],
+                'qty'           => $hit['qty'],
+                'feed_available'=> ($hit['qty'] > 0) ? true : SUPPLIER_ZERO_MEANS_AVAILABLE,
+            ];
+        } else {
+            $unmatched[] = [
+                'vendor_code' => $code,
+                'title'       => $title,
+                'signature'   => implode(' ', modelSignature($title)),
+                'size'        => extractSizeKey($title),
+            ];
+        }
+    }
+
+    $supplierUnused = [];
+    foreach ($supplierStock as $row) {
+        if (!isset($usedRaw[$row['raw']])) {
+            $supplierUnused[] = [
+                'supplier_row' => $row['raw'],
+                'signature'    => implode(' ', $row['sig']),
+                'size'         => $row['size'],
+                'qty'          => $row['qty'],
+            ];
+        }
+    }
+
+    echo json_encode([
+        'supplier_error'          => $supplierErr,
+        'supplier_rows_parsed'    => count($supplierStock),
+        'catalog_offers_in_scope' => count($matched) + count($unmatched),
+        'matched_count'           => count($matched),
+        'unmatched_count'         => count($unmatched),
+        'supplier_rows_unused'    => $supplierUnused,
+        'unmatched_offers'        => $unmatched,
+        'matched_offers'          => $matched,
+    ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    exit;
+}
+
 http_response_code(400);
 header('Content-Type: application/xml; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
-echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<error>Invalid type parameter. Use ?type=catalog or ?type=prices</error>";
+echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<error>Invalid type parameter. Use ?type=catalog, ?type=prices or ?type=stockcheck</error>";
