@@ -847,7 +847,7 @@ if ($type === 'stockcheck') {
                 'title'         => $title,
                 'supplier_row'  => $hit['raw'],
                 'qty'           => $hit['qty'],
-                'feed_available'=> ($hit['qty'] > 0) ? true : SUPPLIER_ZERO_MEANS_AVAILABLE,
+                'feed_available'=> ($hit['qty'] > 0) ? true : !SUPPLIER_ZERO_MEANS_UNAVAILABLE,
             ];
         } else {
             $unmatched[] = [
