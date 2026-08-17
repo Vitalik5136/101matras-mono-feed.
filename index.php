@@ -689,7 +689,7 @@ if ($type === 'prices') {
                 || mb_stripos($brandForCheck, 'єврослип') !== false
                 || mb_stripos($brandForCheck, 'еврослип') !== false;
             if ($isEuroslip && !$isCustomSizeOrder) {
-                $daysToDispatch = 8;
+                $daysToDispatch = 6;
             }
 
             $data[] = [
