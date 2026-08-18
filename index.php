@@ -24,6 +24,18 @@ define('BLOCKED_BRAND_MODE', 'unavailable');
 // let the brand back into the feed.
 $BLOCKED_BRANDS = ['u-tek', 'utek', 'u tek', 'u-tech', 'utech', 'ю-тек', 'ютек', 'ютех'];
 
+// ------------------------------------------------------------------
+// 6-DAY DISPATCH BRANDS
+// ------------------------------------------------------------------
+// Manufacturers whose products always get days_to_dispatch = 6 in the
+// price feed, whatever the stock signals say. Matched case-insensitively
+// as a substring of <vendor>. The only rule that still overrides this is
+// "розмір під замовлення" (custom size), which stays at 30 days.
+$SIX_DAY_BRANDS = [
+    'eurosleep', 'euroslip', 'euro slip', 'єврослип', 'еврослип',
+    'chef', 'шеф',
+];
+
 ini_set('memory_limit', '512M');
 set_time_limit(120);
 
@@ -723,16 +735,17 @@ if ($type === 'prices') {
                 $daysToDispatch = $horoshopAvailable ? 3 : 12;
             }
 
-            // Brand exception: Eurosleep always ships in 10 days, regardless
-            // of stock/availability signals -- yields only to the
-            // custom-size rule above.
-            $isEuroslip = mb_stripos($brandForCheck, 'eurosleep') !== false
-                || mb_stripos($brandForCheck, 'euroslip') !== false
-                || mb_stripos($brandForCheck, 'euro slip') !== false
-                || mb_stripos($brandForCheck, 'єврослип') !== false
-                || mb_stripos($brandForCheck, 'еврослип') !== false;
-            if ($isEuroslip && !$isCustomSizeOrder) {
-                $daysToDispatch = 6;
+            // Brand exception: these manufacturers always ship in 6 days,
+            // regardless of stock/availability signals -- yields only to the
+            // custom-size rule above. Matched against <vendor> only (not the
+            // title), so a model name can never trigger it by accident.
+            // To add a brand, put its spelling variants in $SIX_DAY_BRANDS
+            // at the top of this file -- nothing else needs changing.
+            foreach ($GLOBALS['SIX_DAY_BRANDS'] as $b) {
+                if (mb_stripos($brandForCheck, $b) !== false && !$isCustomSizeOrder) {
+                    $daysToDispatch = 6;
+                    break;
+                }
             }
 
             // Blocked manufacturer. Deliberately placed after every rule
