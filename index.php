@@ -673,11 +673,19 @@ if ($type === 'prices') {
             // product shows as unavailable rather than guessing.
             $realStock = null;
             $mattressMatched = false;
+            $supplierOutOfStock = false;
             if ($categoryIdSrc === '1061' && !$isCustomSizeOrder) {
                 $titleForMatch = isset($offer->name) ? (string)$offer->name : '';
                 $realStock = lookupSupplierStock($titleForMatch, $supplierStock);
                 $mattressMatched = $realStock !== null;
-                $isAvailable = true; // always show mattresses as available (except custom-size, handled above); days_to_dispatch below reflects the real supplier signal
+                $isAvailable = true; // matched-but-empty is handled by $supplierOutOfStock below; unmatched mattresses stay available
+                // Zero (or negative) free stock in the supplier's file is not
+                // the final word -- the mattress may still be sitting in our
+                // own warehouse. In that case Horoshop's flag decides:
+                //   Horoshop in stock -> orderable, 3 days
+                //   Horoshop empty    -> not orderable
+                // Enforced further down, AFTER the brand exceptions.
+                $supplierOutOfStock = $mattressMatched && $realStock <= 0;
             }
 
             $brandForCheck = isset($offer->vendor) ? (string)$offer->vendor : '';
@@ -730,7 +738,11 @@ if ($type === 'prices') {
             if ($isCustomSizeOrder) {
                 $daysToDispatch = 30;
             } elseif ($mattressMatched) {
-                $daysToDispatch = $realStock > 0 ? 3 : 12;
+                // Matched mattresses always dispatch in 3 days: either the
+                // supplier confirms stock, or it's on our own shelf (an
+                // empty supplier row plus an empty Horoshop flag makes the
+                // product unavailable above, so the number is moot there).
+                $daysToDispatch = 3;
             } else {
                 $daysToDispatch = $horoshopAvailable ? 3 : 12;
             }
@@ -746,6 +758,12 @@ if ($type === 'prices') {
                     $daysToDispatch = 6;
                     break;
                 }
+            }
+
+            // Mattress empty at the supplier -> fall back to Horoshop's own
+            // stock flag. Placed after the brand exceptions on purpose.
+            if ($supplierOutOfStock) {
+                $isAvailable = $horoshopAvailable;
             }
 
             // Blocked manufacturer. Deliberately placed after every rule
