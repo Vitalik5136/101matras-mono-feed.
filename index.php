@@ -5,6 +5,25 @@
 define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/bf5ada79a4036e96ecc39bc3173ff7a2.xml');
 define('SUPPLIER_STOCK_CSV_URL', 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGcRlGkFyXq5e7fp6crNoKM3iOyp7A96vCHGjTBvK_FJz0uHXkkf8kqUCFPkAbHBPHWDM_aHcqeClU/pub?gid=1912985661&single=true&output=tsv');
 
+// ------------------------------------------------------------------
+// BLOCKED MANUFACTURERS (UTech)
+// ------------------------------------------------------------------
+// Two modes:
+//   'unavailable' -- products stay in the catalog feed but can never be
+//                    ordered: availability=false, stock 0, in both feeds.
+//                    The Мономаркет product cards survive, so switching
+//                    the brand back on later is one edit here.
+//   'remove'      -- products are dropped from both feeds entirely. The
+//                    cards disappear from Мономаркет; bringing the brand
+//                    back later means going through their moderation again.
+define('BLOCKED_BRAND_MODE', 'unavailable');
+
+// Matched case-insensitively against <vendor> AND the product title, as a
+// substring. The brand is spelled "U-tek" on the site; the rest are
+// spelling variants kept so a change on the Horoshop side can't quietly
+// let the brand back into the feed.
+$BLOCKED_BRANDS = ['u-tek', 'utek', 'u tek', 'u-tech', 'utech', 'ю-тек', 'ютек', 'ютех'];
+
 ini_set('memory_limit', '512M');
 set_time_limit(120);
 
@@ -370,6 +389,17 @@ function estimateDimensions($title) {
     return ['width' => round($width), 'length' => round($length), 'height' => round($height)];
 }
 
+// True when this offer belongs to a manufacturer we must not sell.
+// Checks <vendor> first, then the title -- some feeds carry the brand only
+// in the product name.
+function isBlockedBrand($vendor, $title, array $brands) {
+    $hay = mb_strtolower($vendor . ' ' . $title);
+    foreach ($brands as $b) {
+        if (mb_strpos($hay, mb_strtolower($b)) !== false) return true;
+    }
+    return false;
+}
+
 function warrantyMonths($text) {
     if (preg_match('/(\d+)\s*мес/ui', $text, $m)) return (int)$m[1];
     return 0;
@@ -511,6 +541,13 @@ if ($type === 'catalog') {
 
             $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
             $isAvailable = in_array($availAttr, ['true', '1', 'yes']);
+
+            // Blocked manufacturer: either skip the offer entirely, or keep
+            // the card but force it to "out of stock" so it can't be ordered.
+            if (isBlockedBrand($brand, $title, $GLOBALS['BLOCKED_BRANDS'])) {
+                if (BLOCKED_BRAND_MODE === 'remove') continue;
+                $isAvailable = false;
+            }
 
             if ($realMattressSize !== null) {
                 $specs['Розмір'] = $realMattressSize;
@@ -690,6 +727,15 @@ if ($type === 'prices') {
                 || mb_stripos($brandForCheck, 'еврослип') !== false;
             if ($isEuroslip && !$isCustomSizeOrder) {
                 $daysToDispatch = 6;
+            }
+
+            // Blocked manufacturer. Deliberately placed after every rule
+            // above (mattress stock match, Billerbeck, Eurosleep), so
+            // nothing can flip these back to orderable.
+            if (isBlockedBrand($brandForCheck, $titleForCustomSizeCheck, $GLOBALS['BLOCKED_BRANDS'])) {
+                if (BLOCKED_BRAND_MODE === 'remove') continue;
+                $isAvailable = false;
+                $realStock = 0;
             }
 
             $data[] = [
