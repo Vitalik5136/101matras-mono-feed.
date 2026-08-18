@@ -628,10 +628,12 @@ if ($type === 'prices') {
             if ($categoryIdSrc === '1059') continue; // beds removed from the feed entirely, per agreement with Мономаркет
             $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
             $horoshopAvailable = in_array($availAttr, ['true', '1', 'yes']);
-            // If Horoshop says "not in stock", we no longer hide the
-            // product as unavailable -- we still show it as available,
-            // just with a longer dispatch time (12 days instead of 3).
-            $isAvailable = true;
+            // Availability follows the stock signal directly:
+            //   in stock  -> orderable, 3 days to dispatch
+            //   stock 0   -> NOT orderable
+            // (Replaces the previous behaviour, where an out-of-stock
+            // product was still sold with a longer 12-day dispatch time.)
+            $isAvailable = $horoshopAvailable;
 
             // "Розмір під замовлення" (custom/made-to-order size) variants
             // exist for every mattress but aren't real purchasable stock --
@@ -659,15 +661,21 @@ if ($type === 'prices') {
                 $titleForMatch = isset($offer->name) ? (string)$offer->name : '';
                 $realStock = lookupSupplierStock($titleForMatch, $supplierStock);
                 $mattressMatched = $realStock !== null;
-                $isAvailable = true; // always show mattresses as available (except custom-size, handled above); days_to_dispatch below reflects the real supplier signal
+                // A positive free balance in the supplier's file is taken as
+                // is. Zero, negative, or no matching row -> availability
+                // falls back to Horoshop's own flag (set above).
+                if ($mattressMatched && $realStock > 0) {
+                    $isAvailable = true;
+                }
             }
 
             $brandForCheck = isset($offer->vendor) ? (string)$offer->vendor : '';
 
             // Brand exception: Billerbeck strictly follows Horoshop's own
-            // availability flag -- in stock -> available (3 days),
-            // out of stock -> fully unavailable (not shown as available
-            // at all). This still yields to the custom-size rule above.
+            // availability flag. Since the general rule now does exactly
+            // the same thing, this block changes nothing today -- it is
+            // kept deliberately, so that if the general rule is ever
+            // loosened again, Billerbeck stays strict.
             $isBillerbeck = mb_stripos($brandForCheck, 'billerbeck') !== false
                 || mb_stripos($brandForCheck, 'біллербек') !== false
                 || mb_stripos($brandForCheck, 'биллербек') !== false;
@@ -707,15 +715,9 @@ if ($type === 'prices') {
 
             // Dispatch time:
             // - custom/made-to-order size -> always 30 (unchanged)
-            // - matched mattress -> 3 if the supplier confirms stock, else 12
-            // - everything else -> 3 if Horoshop's own flag says in stock, else 12
-            if ($isCustomSizeOrder) {
-                $daysToDispatch = 30;
-            } elseif ($mattressMatched) {
-                $daysToDispatch = $realStock > 0 ? 3 : 12;
-            } else {
-                $daysToDispatch = $horoshopAvailable ? 3 : 12;
-            }
+            // - everything else -> 3 days; anything without stock is not
+            //   orderable at all, so it never needs a longer bucket.
+            $daysToDispatch = $isCustomSizeOrder ? 30 : 3;
 
             // Brand exception: Eurosleep always ships in 10 days, regardless
             // of stock/availability signals -- yields only to the
@@ -747,7 +749,7 @@ if ($type === 'prices') {
                 'warranty_period' => $warrantyMonthsVal,
                 'max_pay_in_parts' => $maxPayInParts,
                 'days_to_dispatch' => $daysToDispatch,
-                'stock' => ($realStock !== null && $realStock > 0) ? $realStock : ($isAvailable ? 10 : 0), // positive supplier qty when confirmed; otherwise placeholder while still shown as available
+                'stock' => ($realStock !== null && $realStock > 0) ? $realStock : ($isAvailable ? 10 : 0), // real supplier qty when confirmed; otherwise a placeholder for in-stock items, 0 when not orderable
                 'warehouses' => [
                     [
                         'id' => 'Main',
