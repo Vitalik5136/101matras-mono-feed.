@@ -36,6 +36,57 @@ $SIX_DAY_BRANDS = [
     'chef', 'шеф',
 ];
 
+// ------------------------------------------------------------------
+// PRODUCT LINE  ->  REAL MANUFACTURER
+// ------------------------------------------------------------------
+// Horoshop puts the marketing LINE name in <vendor> ("Sleep&Fly"), but
+// Мономаркет expects the MANUFACTURER there ("EMM"), with the line name
+// staying in the product title -- e.g. brand "EMM", title
+// "Матрац EMM Sleep&Fly 180x200".
+//
+// Key   = the line name as it appears in Horoshop's <vendor> (substring,
+//         case-insensitive)
+// Value = the manufacturer to send to Мономаркет instead
+//
+// Only lines listed here are rewritten; every other vendor passes through
+// untouched. Add a line, and it starts being reported under its real
+// manufacturer on the next feed refresh.
+// Format: 'text to look for in <vendor>' => ['Manufacturer', 'Line name as
+// it should be written in the title'].
+// NOTE: the manufacturer is written in CYRILLIC -- "ЕММ" (Е, М, М), not the
+// Latin "EMM". They look identical on screen but are different characters,
+// and Мономаркет would treat them as two separate brands. Do not "fix" the
+// spelling by retyping it on a Latin keyboard.
+$BRAND_LINE_MAP = [
+    'sleep&fly'   => ['ЕММ', 'Sleep&Fly'],
+    'sleep & fly' => ['ЕММ', 'Sleep&Fly'],
+    'sleepandfly' => ['ЕММ', 'Sleep&Fly'],
+    'take&go'     => ['ЕММ', 'Take&Go'],
+    'take & go'   => ['ЕММ', 'Take&Go'],
+    // Products already labelled just "EMM" (Latin) or "ЕММ" -- normalised to
+    // the Cyrillic spelling so Мономаркет doesn't end up with two brands
+    // that look identical. Empty line name = leave the title alone.
+    // Keep these LAST: the entries above are checked first, so "EMM Take&Go"
+    // is still recognised as the Take&Go line rather than matching here.
+    'emm'         => ['ЕММ', ''],
+    'емм'         => ['ЕММ', ''],
+];
+
+// Rewrite titles into the shape Мономаркет asked for:
+//     <product type> <MANUFACTURER> <Line> <the rest>
+// e.g. "Матрац ЕММ Sleep&Fly 180x200". The manufacturer and the line name
+// are inserted right after the leading product-type word; whichever of the
+// two is already present in the title is not duplicated.
+define('BRAND_LINE_IN_TITLE', true);
+
+// Leading words after which the brand is inserted. If a title starts with
+// something else, the brand goes to the very front instead.
+$TITLE_TYPE_WORDS = [
+    'матрац', 'матрас', 'подушка', 'ковдра', 'одеяло', 'наматрацник',
+    'наматрасник', 'топер', 'топпер', 'простирадло', 'простыня', 'ліжко',
+    'кровать', 'чохол', 'чехол', 'захисний',
+];
+
 ini_set('memory_limit', '512M');
 set_time_limit(120);
 
@@ -401,6 +452,49 @@ function estimateDimensions($title) {
     return ['width' => round($width), 'length' => round($length), 'height' => round($height)];
 }
 
+// Rewrites a line name in <vendor> to the real manufacturer, and reports
+// which line was matched so the caller can keep it visible in the title.
+// Returns [brandToSend, matchedLineName]; the line is '' when nothing matched.
+function resolveBrandLine($vendor, array $map) {
+    foreach ($map as $needle => $pair) {
+        if (mb_stripos($vendor, $needle) !== false) {
+            return [$pair[0], $pair[1]]; // [manufacturer, properly spelled line name]
+        }
+    }
+    return [$vendor, ''];
+}
+
+// Puts the manufacturer (and, when missing, the line name) into the title
+// right after the leading product-type word, e.g.
+//   "Матрац Sleep&Fly Standart 180x200" -> "Матрац ЕММ Sleep&Fly Standart 180x200"
+//   "Матрац ортопедичний 160x200"        -> "Матрац ЕММ Sleep&Fly ортопедичний 160x200"
+// Anything already present is left alone, so running this twice is safe.
+function placeBrandInTitle($title, $manufacturer, $line, array $typeWords) {
+    $insert = [];
+
+    // "EMM" in Latin counts as already present -- don't add a second one.
+    $hasBrand = mb_stripos($title, $manufacturer) !== false
+        || mb_stripos($title, 'emm') !== false;
+    if (!$hasBrand) $insert[] = $manufacturer;
+
+    if ($line !== '' && mb_stripos($title, $line) === false) $insert[] = $line;
+    if (empty($insert)) return $title;
+
+    $addition = implode(' ', $insert);
+    $parts = preg_split('/\s+/u', trim($title), 2);
+    $first = $parts[0] ?? '';
+    $rest = $parts[1] ?? '';
+
+    $firstIsType = false;
+    foreach ($typeWords as $w) {
+        if (mb_strtolower($first) === mb_strtolower($w)) { $firstIsType = true; break; }
+    }
+    if ($firstIsType) {
+        return trim($first . ' ' . $addition . ($rest !== '' ? ' ' . $rest : ''));
+    }
+    return trim($addition . ' ' . $title);
+}
+
 // True when this offer belongs to a manufacturer we must not sell.
 // Checks <vendor> first, then the title -- some feeds carry the brand only
 // in the product name.
@@ -523,6 +617,13 @@ if ($type === 'catalog') {
             $brand = isset($offer->vendor) ? (string)$offer->vendor : '';
             $titleRaw = isset($offer->name) ? (string)$offer->name : '';
             $title = preg_replace('/\bМатрас\b/u', 'Матрац', $titleRaw);
+
+            // Send the manufacturer as the brand, not the marketing line.
+            $vendorRaw = $brand;
+            [$brand, $matchedLine] = resolveBrandLine($vendorRaw, $GLOBALS['BRAND_LINE_MAP']);
+            if (BRAND_LINE_IN_TITLE && $brand !== $vendorRaw) {
+                $title = placeBrandInTitle($title, $brand, $matchedLine, $GLOBALS['TITLE_TYPE_WORDS']);
+            }
             $descriptionHtml = isset($offer->description) ? (string)$offer->description : '';
 
             $specs = extractSpecs($descriptionHtml);
