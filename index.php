@@ -31,6 +31,17 @@ $BLOCKED_BRANDS = ['u-tek', 'utek', 'u tek', 'u-tech', 'utech', 'ю-тек', 'ю
 // price feed, whatever the stock signals say. Matched case-insensitively
 // as a substring of <vendor>. The only rule that still overrides this is
 // "розмір під замовлення" (custom size), which stays at 30 days.
+// ------------------------------------------------------------------
+// TURKISH SUPPLIER BRANDS
+// ------------------------------------------------------------------
+// Everything we sell from the Turkish supplier. These products exist only
+// in two places: their stock file and our own warehouse. So if the supplier
+// file doesn't confirm stock (zero, or no matching row at all) AND Horoshop
+// says we don't have it either, the product genuinely does not exist and
+// must not be orderable -- no 12-day "we'll get it somehow" fallback.
+// Matched case-insensitively as a substring of <vendor>.
+$TURKISH_SUPPLIER_BRANDS = ['fdm', 'silence'];
+
 $SIX_DAY_BRANDS = [
     'eurosleep', 'euroslip', 'euro slip', 'єврослип', 'еврослип',
     'chef', 'шеф',
@@ -861,9 +872,17 @@ if ($type === 'prices') {
                 }
             }
 
-            // Mattress empty at the supplier -> fall back to Horoshop's own
-            // stock flag. Placed after the brand exceptions on purpose.
-            if ($supplierOutOfStock) {
+            // Turkish-supplier goods with no confirmed stock anywhere ->
+            // Horoshop's own flag decides, and when that is empty too the
+            // product becomes unavailable. Covers both cases: a matched row
+            // showing zero, and no row in the supplier file at all.
+            // Placed after the brand exceptions on purpose.
+            $supplierConfirmedStock = ($realStock !== null && $realStock > 0);
+            $isTurkishSupplierBrand = false;
+            foreach ($GLOBALS['TURKISH_SUPPLIER_BRANDS'] as $b) {
+                if (mb_stripos($brandForCheck, $b) !== false) { $isTurkishSupplierBrand = true; break; }
+            }
+            if (($supplierOutOfStock || $isTurkishSupplierBrand) && !$supplierConfirmedStock) {
                 $isAvailable = $horoshopAvailable;
             }
 
