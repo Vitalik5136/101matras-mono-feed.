@@ -181,8 +181,11 @@ function iterateOffers($tmpPath) {
 $categoryNames = [];
 $catReader = new XMLReader();
 $catReader->open($tmpFeedFile);
+$sourceFeedDate = ''; // <yml_catalog date="..."> -- when Horoshop generated the export
 while ($catReader->read()) {
-    if ($catReader->nodeType === XMLReader::ELEMENT && $catReader->name === 'category') {
+    if ($catReader->nodeType === XMLReader::ELEMENT && $catReader->name === 'yml_catalog') {
+        $sourceFeedDate = (string)$catReader->getAttribute('date');
+    } elseif ($catReader->nodeType === XMLReader::ELEMENT && $catReader->name === 'category') {
         $id = $catReader->getAttribute('id');
         $catNode = $catReader->expand();
         if ($id !== null) $categoryNames[$id] = trim($catNode->textContent);
@@ -504,6 +507,60 @@ function placeBrandInTitle($title, $manufacturer, $line, array $typeWords) {
         return trim($first . ' ' . $addition . ($rest !== '' ? ' ' . $rest : ''));
     }
     return trim($addition . ' ' . $title);
+}
+
+// Мономаркет treats a NEW updatedAt as "the seller refreshed their stock".
+// So emitting the current time on every request -- which is what a plain
+// gmdate() here does -- tells them stock was replenished every 30 minutes,
+// even when nothing changed, and their system then ships items we no longer
+// have. The timestamp must therefore move only when the payload really
+// changes.
+//
+// The service is stateless, so the previous payload's fingerprint is kept in
+// a small temp file. If the payload is byte-for-byte what we sent last time,
+// the stored timestamp is returned unchanged.
+//
+// If that file is lost (Render restarts or redeploys the instance), we fall
+// back to the timestamp Horoshop itself put on the export rather than to
+// "now" -- that value is stable across our restarts, so a restart alone
+// cannot fake a stock refresh.
+function priceFeedUpdatedAt(array $data, $sourceFeedDate) {
+    $fingerprint = md5(json_encode($data, JSON_UNESCAPED_UNICODE));
+    $cacheFile = sys_get_temp_dir() . '/mono_price_state.json';
+
+    $state = json_decode((string)@file_get_contents($cacheFile), true);
+    $haveState = is_array($state) && !empty($state['updatedAt']) && !empty($state['fingerprint']);
+
+    if ($haveState && $state['fingerprint'] === $fingerprint) {
+        return $state['updatedAt']; // nothing changed -> keep the old timestamp
+    }
+
+    $updatedAt = '';
+    if ($haveState) {
+        // We have a previous payload to compare against and it differs, so a
+        // real change happened just now -- stamp it with the current time.
+        // (Falling back to the export's own date here would be wrong: a
+        // change can come from the supplier's stock sheet, which does not
+        // touch Horoshop's export date at all.)
+        $updatedAt = gmdate('Y-m-d\TH:i:s\Z');
+    } elseif ($sourceFeedDate !== '') {
+        // Cold start: nothing to compare against, so we must not claim a
+        // refresh happened now. Horoshop writes local Kyiv time, e.g.
+        // "2026-08-17 17:35" -- a value that survives our restarts.
+        $dt = date_create_from_format('Y-m-d H:i', trim($sourceFeedDate), new DateTimeZone('Europe/Kyiv'))
+            ?: date_create_from_format('Y-m-d H:i:s', trim($sourceFeedDate), new DateTimeZone('Europe/Kyiv'));
+        if ($dt) {
+            $dt->setTimezone(new DateTimeZone('UTC'));
+            $updatedAt = $dt->format('Y-m-d\TH:i:s\Z');
+        }
+    }
+    if ($updatedAt === '') $updatedAt = gmdate('Y-m-d\TH:i:s\Z');
+
+    @file_put_contents($cacheFile, json_encode([
+        'fingerprint' => $fingerprint,
+        'updatedAt' => $updatedAt,
+    ]));
+    return $updatedAt;
 }
 
 // True when this offer belongs to a manufacturer we must not sell.
@@ -916,7 +973,7 @@ if ($type === 'prices') {
 
     $priceList = [
         'total' => count($data),
-        'updatedAt' => gmdate('Y-m-d\TH:i:s\Z'),
+        'updatedAt' => priceFeedUpdatedAt($data, $sourceFeedDate),
         'data' => $data,
     ];
 
