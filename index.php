@@ -5,99 +5,6 @@
 define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/bf5ada79a4036e96ecc39bc3173ff7a2.xml');
 define('SUPPLIER_STOCK_CSV_URL', 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGcRlGkFyXq5e7fp6crNoKM3iOyp7A96vCHGjTBvK_FJz0uHXkkf8kqUCFPkAbHBPHWDM_aHcqeClU/pub?gid=1912985661&single=true&output=tsv');
 
-// ------------------------------------------------------------------
-// BLOCKED MANUFACTURERS (UTech)
-// ------------------------------------------------------------------
-// Two modes:
-//   'unavailable' -- products stay in the catalog feed but can never be
-//                    ordered: availability=false, stock 0, in both feeds.
-//                    The Мономаркет product cards survive, so switching
-//                    the brand back on later is one edit here.
-//   'remove'      -- products are dropped from both feeds entirely. The
-//                    cards disappear from Мономаркет; bringing the brand
-//                    back later means going through their moderation again.
-define('BLOCKED_BRAND_MODE', 'unavailable');
-
-// Matched case-insensitively against <vendor> AND the product title, as a
-// substring. The brand is spelled "U-tek" on the site; the rest are
-// spelling variants kept so a change on the Horoshop side can't quietly
-// let the brand back into the feed.
-$BLOCKED_BRANDS = ['u-tek', 'utek', 'u tek', 'u-tech', 'utech', 'ю-тек', 'ютек', 'ютех'];
-
-// ------------------------------------------------------------------
-// 6-DAY DISPATCH BRANDS
-// ------------------------------------------------------------------
-// Manufacturers whose products always get days_to_dispatch = 6 in the
-// price feed, whatever the stock signals say. Matched case-insensitively
-// as a substring of <vendor>. The only rule that still overrides this is
-// "розмір під замовлення" (custom size), which stays at 30 days.
-// ------------------------------------------------------------------
-// TURKISH SUPPLIER BRANDS
-// ------------------------------------------------------------------
-// Everything we sell from the Turkish supplier. These products exist only
-// in two places: their stock file and our own warehouse. So if the supplier
-// file doesn't confirm stock (zero, or no matching row at all) AND Horoshop
-// says we don't have it either, the product genuinely does not exist and
-// must not be orderable -- no 12-day "we'll get it somehow" fallback.
-// Matched case-insensitively as a substring of <vendor>.
-$TURKISH_SUPPLIER_BRANDS = ['fdm', 'silence'];
-
-$SIX_DAY_BRANDS = [
-    'eurosleep', 'euroslip', 'euro slip', 'єврослип', 'еврослип',
-    'chef', 'шеф',
-];
-
-// ------------------------------------------------------------------
-// PRODUCT LINE  ->  REAL MANUFACTURER
-// ------------------------------------------------------------------
-// Horoshop puts the marketing LINE name in <vendor> ("Sleep&Fly"), but
-// Мономаркет expects the MANUFACTURER there ("EMM"), with the line name
-// staying in the product title -- e.g. brand "EMM", title
-// "Матрац EMM Sleep&Fly 180x200".
-//
-// Key   = the line name as it appears in Horoshop's <vendor> (substring,
-//         case-insensitive)
-// Value = the manufacturer to send to Мономаркет instead
-//
-// Only lines listed here are rewritten; every other vendor passes through
-// untouched. Add a line, and it starts being reported under its real
-// manufacturer on the next feed refresh.
-// Format: 'text to look for in <vendor>' => ['Manufacturer', 'Line name as
-// it should be written in the title'].
-// NOTE: the manufacturer is written in CYRILLIC -- "ЕММ" (Е, М, М), not the
-// Latin "EMM". They look identical on screen but are different characters,
-// and Мономаркет would treat them as two separate brands. Do not "fix" the
-// spelling by retyping it on a Latin keyboard.
-$BRAND_LINE_MAP = [
-    'sleep&fly'   => ['ЕММ', 'Sleep&Fly'],
-    'sleep & fly' => ['ЕММ', 'Sleep&Fly'],
-    'sleepandfly' => ['ЕММ', 'Sleep&Fly'],
-    'take&go'     => ['ЕММ', 'Take&Go'],
-    'take & go'   => ['ЕММ', 'Take&Go'],
-    // Products already labelled just "EMM" (Latin) or "ЕММ" -- normalised to
-    // the Cyrillic spelling so Мономаркет doesn't end up with two brands
-    // that look identical. Empty line name = leave the title alone.
-    // Keep these LAST: the entries above are checked first, so "EMM Take&Go"
-    // is still recognised as the Take&Go line rather than matching here.
-    'emm'         => ['ЕММ', ''],
-    'емм'         => ['ЕММ', ''],
-];
-
-// Rewrite titles into the shape Мономаркет asked for:
-//     <product type> <MANUFACTURER> <Line> <the rest>
-// e.g. "Матрац ЕММ Sleep&Fly 180x200". The manufacturer and the line name
-// are inserted right after the leading product-type word; whichever of the
-// two is already present in the title is not duplicated.
-define('BRAND_LINE_IN_TITLE', true);
-
-// Leading words after which the brand is inserted. If a title starts with
-// something else, the brand goes to the very front instead.
-$TITLE_TYPE_WORDS = [
-    'матрац', 'матрас', 'подушка', 'ковдра', 'одеяло', 'наматрацник',
-    'наматрасник', 'топер', 'топпер', 'простирадло', 'простыня', 'ліжко',
-    'кровать', 'чохол', 'чехол', 'захисний',
-];
-
 ini_set('memory_limit', '512M');
 set_time_limit(120);
 
@@ -181,11 +88,8 @@ function iterateOffers($tmpPath) {
 $categoryNames = [];
 $catReader = new XMLReader();
 $catReader->open($tmpFeedFile);
-$sourceFeedDate = ''; // <yml_catalog date="..."> -- when Horoshop generated the export
 while ($catReader->read()) {
-    if ($catReader->nodeType === XMLReader::ELEMENT && $catReader->name === 'yml_catalog') {
-        $sourceFeedDate = (string)$catReader->getAttribute('date');
-    } elseif ($catReader->nodeType === XMLReader::ELEMENT && $catReader->name === 'category') {
+    if ($catReader->nodeType === XMLReader::ELEMENT && $catReader->name === 'category') {
         $id = $catReader->getAttribute('id');
         $catNode = $catReader->expand();
         if ($id !== null) $categoryNames[$id] = trim($catNode->textContent);
@@ -466,114 +370,6 @@ function estimateDimensions($title) {
     return ['width' => round($width), 'length' => round($length), 'height' => round($height)];
 }
 
-// Rewrites a line name in <vendor> to the real manufacturer, and reports
-// which line was matched so the caller can keep it visible in the title.
-// Returns [brandToSend, matchedLineName]; the line is '' when nothing matched.
-function resolveBrandLine($vendor, array $map) {
-    foreach ($map as $needle => $pair) {
-        if (mb_stripos($vendor, $needle) !== false) {
-            return [$pair[0], $pair[1]]; // [manufacturer, properly spelled line name]
-        }
-    }
-    return [$vendor, ''];
-}
-
-// Puts the manufacturer (and, when missing, the line name) into the title
-// right after the leading product-type word, e.g.
-//   "Матрац Sleep&Fly Standart 180x200" -> "Матрац ЕММ Sleep&Fly Standart 180x200"
-//   "Матрац ортопедичний 160x200"        -> "Матрац ЕММ Sleep&Fly ортопедичний 160x200"
-// Anything already present is left alone, so running this twice is safe.
-function placeBrandInTitle($title, $manufacturer, $line, array $typeWords) {
-    $insert = [];
-
-    // "EMM" in Latin counts as already present -- don't add a second one.
-    $hasBrand = mb_stripos($title, $manufacturer) !== false
-        || mb_stripos($title, 'emm') !== false;
-    if (!$hasBrand) $insert[] = $manufacturer;
-
-    if ($line !== '' && mb_stripos($title, $line) === false) $insert[] = $line;
-    if (empty($insert)) return $title;
-
-    $addition = implode(' ', $insert);
-    $parts = preg_split('/\s+/u', trim($title), 2);
-    $first = $parts[0] ?? '';
-    $rest = $parts[1] ?? '';
-
-    $firstIsType = false;
-    foreach ($typeWords as $w) {
-        if (mb_strtolower($first) === mb_strtolower($w)) { $firstIsType = true; break; }
-    }
-    if ($firstIsType) {
-        return trim($first . ' ' . $addition . ($rest !== '' ? ' ' . $rest : ''));
-    }
-    return trim($addition . ' ' . $title);
-}
-
-// Мономаркет treats a NEW updatedAt as "the seller refreshed their stock".
-// So emitting the current time on every request -- which is what a plain
-// gmdate() here does -- tells them stock was replenished every 30 minutes,
-// even when nothing changed, and their system then ships items we no longer
-// have. The timestamp must therefore move only when the payload really
-// changes.
-//
-// The service is stateless, so the previous payload's fingerprint is kept in
-// a small temp file. If the payload is byte-for-byte what we sent last time,
-// the stored timestamp is returned unchanged.
-//
-// If that file is lost (Render restarts or redeploys the instance), we fall
-// back to the timestamp Horoshop itself put on the export rather than to
-// "now" -- that value is stable across our restarts, so a restart alone
-// cannot fake a stock refresh.
-function priceFeedUpdatedAt(array $data, $sourceFeedDate) {
-    $fingerprint = md5(json_encode($data, JSON_UNESCAPED_UNICODE));
-    $cacheFile = sys_get_temp_dir() . '/mono_price_state.json';
-
-    $state = json_decode((string)@file_get_contents($cacheFile), true);
-    $haveState = is_array($state) && !empty($state['updatedAt']) && !empty($state['fingerprint']);
-
-    if ($haveState && $state['fingerprint'] === $fingerprint) {
-        return $state['updatedAt']; // nothing changed -> keep the old timestamp
-    }
-
-    $updatedAt = '';
-    if ($haveState) {
-        // We have a previous payload to compare against and it differs, so a
-        // real change happened just now -- stamp it with the current time.
-        // (Falling back to the export's own date here would be wrong: a
-        // change can come from the supplier's stock sheet, which does not
-        // touch Horoshop's export date at all.)
-        $updatedAt = gmdate('Y-m-d\TH:i:s\Z');
-    } elseif ($sourceFeedDate !== '') {
-        // Cold start: nothing to compare against, so we must not claim a
-        // refresh happened now. Horoshop writes local Kyiv time, e.g.
-        // "2026-08-17 17:35" -- a value that survives our restarts.
-        $dt = date_create_from_format('Y-m-d H:i', trim($sourceFeedDate), new DateTimeZone('Europe/Kyiv'))
-            ?: date_create_from_format('Y-m-d H:i:s', trim($sourceFeedDate), new DateTimeZone('Europe/Kyiv'));
-        if ($dt) {
-            $dt->setTimezone(new DateTimeZone('UTC'));
-            $updatedAt = $dt->format('Y-m-d\TH:i:s\Z');
-        }
-    }
-    if ($updatedAt === '') $updatedAt = gmdate('Y-m-d\TH:i:s\Z');
-
-    @file_put_contents($cacheFile, json_encode([
-        'fingerprint' => $fingerprint,
-        'updatedAt' => $updatedAt,
-    ]));
-    return $updatedAt;
-}
-
-// True when this offer belongs to a manufacturer we must not sell.
-// Checks <vendor> first, then the title -- some feeds carry the brand only
-// in the product name.
-function isBlockedBrand($vendor, $title, array $brands) {
-    $hay = mb_strtolower($vendor . ' ' . $title);
-    foreach ($brands as $b) {
-        if (mb_strpos($hay, mb_strtolower($b)) !== false) return true;
-    }
-    return false;
-}
-
 function warrantyMonths($text) {
     if (preg_match('/(\d+)\s*мес/ui', $text, $m)) return (int)$m[1];
     return 0;
@@ -685,13 +481,6 @@ if ($type === 'catalog') {
             $brand = isset($offer->vendor) ? (string)$offer->vendor : '';
             $titleRaw = isset($offer->name) ? (string)$offer->name : '';
             $title = preg_replace('/\bМатрас\b/u', 'Матрац', $titleRaw);
-
-            // Send the manufacturer as the brand, not the marketing line.
-            $vendorRaw = $brand;
-            [$brand, $matchedLine] = resolveBrandLine($vendorRaw, $GLOBALS['BRAND_LINE_MAP']);
-            if (BRAND_LINE_IN_TITLE && $brand !== $vendorRaw) {
-                $title = placeBrandInTitle($title, $brand, $matchedLine, $GLOBALS['TITLE_TYPE_WORDS']);
-            }
             $descriptionHtml = isset($offer->description) ? (string)$offer->description : '';
 
             $specs = extractSpecs($descriptionHtml);
@@ -722,13 +511,6 @@ if ($type === 'catalog') {
 
             $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
             $isAvailable = in_array($availAttr, ['true', '1', 'yes']);
-
-            // Blocked manufacturer: either skip the offer entirely, or keep
-            // the card but force it to "out of stock" so it can't be ordered.
-            if (isBlockedBrand($brand, $title, $GLOBALS['BLOCKED_BRANDS'])) {
-                if (BLOCKED_BRAND_MODE === 'remove') continue;
-                $isAvailable = false;
-            }
 
             if ($realMattressSize !== null) {
                 $specs['Розмір'] = $realMattressSize;
@@ -809,15 +591,9 @@ if ($type === 'prices') {
             if ($categoryIdSrc === '1059') continue; // beds removed from the feed entirely, per agreement with Мономаркет
             $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
             $horoshopAvailable = in_array($availAttr, ['true', '1', 'yes']);
-            // If Horoshop says "not in stock", we do NOT hide the product --
-            // it is still shown as available, just with a longer dispatch
-            // time (12 days instead of 3).
-            //
-            // NOTE: this line is load-bearing. Tying availability to
-            // $horoshopAvailable instead makes the large majority of the
-            // catalogue disappear from Мономаркет at once, because most of
-            // the feed carries available="false". Do not change it without
-            // first counting how many offers that actually affects.
+            // If Horoshop says "not in stock", we no longer hide the
+            // product as unavailable -- we still show it as available,
+            // just with a longer dispatch time (12 days instead of 3).
             $isAvailable = true;
 
             // "Розмір під замовлення" (custom/made-to-order size) variants
@@ -842,19 +618,11 @@ if ($type === 'prices') {
             // product shows as unavailable rather than guessing.
             $realStock = null;
             $mattressMatched = false;
-            $supplierOutOfStock = false;
             if ($categoryIdSrc === '1061' && !$isCustomSizeOrder) {
                 $titleForMatch = isset($offer->name) ? (string)$offer->name : '';
                 $realStock = lookupSupplierStock($titleForMatch, $supplierStock);
                 $mattressMatched = $realStock !== null;
-                $isAvailable = true; // matched-but-empty is handled by $supplierOutOfStock below; unmatched mattresses stay available
-                // Zero (or negative) free stock in the supplier's file is not
-                // the final word -- the mattress may still be sitting in our
-                // own warehouse. In that case Horoshop's flag decides:
-                //   Horoshop in stock -> orderable, 3 days
-                //   Horoshop empty    -> not orderable
-                // Enforced further down, AFTER the brand exceptions.
-                $supplierOutOfStock = $mattressMatched && $realStock <= 0;
+                $isAvailable = true; // always show mattresses as available (except custom-size, handled above); days_to_dispatch below reflects the real supplier signal
             }
 
             $brandForCheck = isset($offer->vendor) ? (string)$offer->vendor : '';
@@ -901,55 +669,36 @@ if ($type === 'prices') {
             }
 
             // Dispatch time:
-            // - custom/made-to-order size -> always 30
+            // - custom/made-to-order size -> always 30 (unchanged)
             // - matched mattress -> 3 if the supplier confirms stock, else 12
             // - everything else -> 3 if Horoshop's own flag says in stock, else 12
             if ($isCustomSizeOrder) {
                 $daysToDispatch = 30;
             } elseif ($mattressMatched) {
-                // Matched mattresses always dispatch in 3 days: either the
-                // supplier confirms stock, or it's on our own shelf (an
-                // empty supplier row plus an empty Horoshop flag makes the
-                // product unavailable above, so the number is moot there).
-                $daysToDispatch = 3;
+                $daysToDispatch = $realStock > 0 ? 3 : 12;
             } else {
                 $daysToDispatch = $horoshopAvailable ? 3 : 12;
             }
 
-            // Brand exception: these manufacturers always ship in 6 days,
-            // regardless of stock/availability signals -- yields only to the
-            // custom-size rule above. Matched against <vendor> only (not the
-            // title), so a model name can never trigger it by accident.
-            // To add a brand, put its spelling variants in $SIX_DAY_BRANDS
-            // at the top of this file -- nothing else needs changing.
-            foreach ($GLOBALS['SIX_DAY_BRANDS'] as $b) {
-                if (mb_stripos($brandForCheck, $b) !== false && !$isCustomSizeOrder) {
-                    $daysToDispatch = 6;
-                    break;
-                }
+            // Brand exception: Eurosleep always ships in 10 days, regardless
+            // of stock/availability signals -- yields only to the
+            // custom-size rule above.
+            $isEuroslip = mb_stripos($brandForCheck, 'eurosleep') !== false
+                || mb_stripos($brandForCheck, 'euroslip') !== false
+                || mb_stripos($brandForCheck, 'euro slip') !== false
+                || mb_stripos($brandForCheck, 'єврослип') !== false
+                || mb_stripos($brandForCheck, 'еврослип') !== false;
+            if ($isEuroslip && !$isCustomSizeOrder) {
+                $daysToDispatch = 6;
             }
 
-            // Turkish-supplier goods with no confirmed stock anywhere ->
-            // Horoshop's own flag decides, and when that is empty too the
-            // product becomes unavailable. Covers both cases: a matched row
-            // showing zero, and no row in the supplier file at all.
-            // Placed after the brand exceptions on purpose.
-            $supplierConfirmedStock = ($realStock !== null && $realStock > 0);
-            $isTurkishSupplierBrand = false;
-            foreach ($GLOBALS['TURKISH_SUPPLIER_BRANDS'] as $b) {
-                if (mb_stripos($brandForCheck, $b) !== false) { $isTurkishSupplierBrand = true; break; }
-            }
-            if (($supplierOutOfStock || $isTurkishSupplierBrand) && !$supplierConfirmedStock) {
-                $isAvailable = $horoshopAvailable;
-            }
-
-            // Blocked manufacturer. Deliberately placed after every rule
-            // above (mattress stock match, Billerbeck, Eurosleep), so
-            // nothing can flip these back to orderable.
-            if (isBlockedBrand($brandForCheck, $titleForCustomSizeCheck, $GLOBALS['BLOCKED_BRANDS'])) {
-                if (BLOCKED_BRAND_MODE === 'remove') continue;
-                $isAvailable = false;
-                $realStock = 0;
+            // Manufacturer exception: EMM (covers all their mattress
+            // brands, e.g. "EMM Melange") always ships in 12 days,
+            // regardless of availability. Still yields to the custom-size
+            // rule above.
+            $isEmm = mb_stripos($brandForCheck, 'emm') !== false;
+            if ($isEmm && !$isCustomSizeOrder) {
+                $daysToDispatch = 12;
             }
 
             $data[] = [
@@ -961,7 +710,7 @@ if ($type === 'prices') {
                 'warranty_period' => $warrantyMonthsVal,
                 'max_pay_in_parts' => $maxPayInParts,
                 'days_to_dispatch' => $daysToDispatch,
-                'stock' => ($realStock !== null && $realStock > 0) ? $realStock : ($isAvailable ? 10 : 0), // real supplier qty when confirmed; otherwise a placeholder for in-stock items, 0 when not orderable
+                'stock' => ($realStock !== null && $realStock > 0) ? $realStock : ($isAvailable ? 10 : 0), // positive supplier qty when confirmed; otherwise placeholder while still shown as available
                 'warehouses' => [
                     [
                         'id' => 'Main',
@@ -973,7 +722,7 @@ if ($type === 'prices') {
 
     $priceList = [
         'total' => count($data),
-        'updatedAt' => priceFeedUpdatedAt($data, $sourceFeedDate),
+        'updatedAt' => gmdate('Y-m-d\TH:i:s\Z'),
         'data' => $data,
     ];
 
