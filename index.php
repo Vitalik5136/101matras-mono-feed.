@@ -732,9 +732,9 @@ if ($type === 'prices') {
 
 // ==========================================
 // type=variants -- CSV list of mattress models with 2+ sizes, for
-// Мономаркет's variant-merge request. Column A: model name (only on the
-// group's first row). Column B: code (matches <code> in the catalog/price
-// feeds).
+// Мономаркет's variant-merge request, plus price/availability per size
+// for quick reference. Column A: model name (only on the group's first
+// row). Column B: code (matches <code> in the catalog/price feeds).
 // ==========================================
 if ($type === 'variants') {
     header('Content-Type: text/csv; charset=utf-8');
@@ -742,9 +742,9 @@ if ($type === 'variants') {
     header('Pragma: no-cache');
 
     $out = fopen('php://output', 'w');
-    fputcsv($out, ['Модель', 'Вендор код']);
+    fputcsv($out, ['Модель', 'Вендор код', 'Розмір', 'Ціна', 'Наявність (Horoshop)']);
 
-    $groups = []; // model_key => [ [code, size], ... ], insertion order preserved
+    $groups = []; // model_key => [ [code, size, price, available], ... ], insertion order preserved
     foreach (iterateOffers($tmpFeedFile) as $offer) {
         $categoryIdSrc = isset($offer->categoryId) ? (string)$offer->categoryId : '';
         if ($categoryIdSrc !== '1061') continue; // mattresses only
@@ -759,15 +759,23 @@ if ($type === 'variants') {
         $modelKey = preg_replace('/\s*см\b/u', '', $modelKey);
         $modelKey = trim(preg_replace('/\s+/u', ' ', $modelKey));
 
+        $sizeMatch = null;
+        if (preg_match('/\d{2,3}\s*[xхX×]\s*\d{2,3}/u', $title, $sm)) {
+            $sizeMatch = $sm[0];
+        }
+        $price = isset($offer->price) ? (string)$offer->price : '';
+        $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
+        $availText = in_array($availAttr, ['true', '1', 'yes']) ? 'Так' : 'Ні';
+
         if (!isset($groups[$modelKey])) $groups[$modelKey] = [];
-        $groups[$modelKey][] = $offerId;
+        $groups[$modelKey][] = [$offerId, $sizeMatch, $price, $availText];
     }
 
-    foreach ($groups as $modelKey => $codes) {
-        if (count($codes) < 2) continue; // only models with 2+ sizes are worth merging
+    foreach ($groups as $modelKey => $rows) {
+        if (count($rows) < 2) continue; // only models with 2+ sizes are worth merging
         $first = true;
-        foreach ($codes as $code) {
-            fputcsv($out, [$first ? $modelKey : '', $code]);
+        foreach ($rows as [$code, $size, $price, $availText]) {
+            fputcsv($out, [$first ? $modelKey : '', $code, $size, $price, $availText]);
             $first = false;
         }
     }
@@ -775,6 +783,7 @@ if ($type === 'variants') {
     fclose($out);
     exit;
 }
+
 
 http_response_code(400);
 header('Content-Type: application/xml; charset=utf-8');
