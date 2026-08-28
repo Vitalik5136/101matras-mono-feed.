@@ -730,6 +730,52 @@ if ($type === 'prices') {
     exit;
 }
 
+// ==========================================
+// type=variants -- CSV list of mattress models with 2+ sizes, for
+// Мономаркет's variant-merge request. Column A: model name (only on the
+// group's first row). Column B: code (matches <code> in the catalog/price
+// feeds).
+// ==========================================
+if ($type === 'variants') {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['Модель', 'Вендор код']);
+
+    $groups = []; // model_key => [ [code, size], ... ], insertion order preserved
+    foreach (iterateOffers($tmpFeedFile) as $offer) {
+        $categoryIdSrc = isset($offer->categoryId) ? (string)$offer->categoryId : '';
+        if ($categoryIdSrc !== '1061') continue; // mattresses only
+
+        $offerId = (string)$offer['id'];
+        $title = isset($offer->name) ? (string)$offer->name : '';
+
+        // Strip the size pattern (and its optional "(NNсм)" thickness) to
+        // get the model's identity, the same way estimateDimensions finds
+        // the size elsewhere in this file.
+        $modelKey = preg_replace('/\d{2,3}\s*[xхX×]\s*\d{2,3}(\s*\(\s*\d+\s*см\s*\))?/u', '', $title);
+        $modelKey = preg_replace('/\s*см\b/u', '', $modelKey);
+        $modelKey = trim(preg_replace('/\s+/u', ' ', $modelKey));
+
+        if (!isset($groups[$modelKey])) $groups[$modelKey] = [];
+        $groups[$modelKey][] = $offerId;
+    }
+
+    foreach ($groups as $modelKey => $codes) {
+        if (count($codes) < 2) continue; // only models with 2+ sizes are worth merging
+        $first = true;
+        foreach ($codes as $code) {
+            fputcsv($out, [$first ? $modelKey : '', $code]);
+            $first = false;
+        }
+    }
+
+    fclose($out);
+    exit;
+}
+
 http_response_code(400);
 header('Content-Type: application/xml; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
