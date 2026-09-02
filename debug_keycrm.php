@@ -25,9 +25,12 @@ function kc($path) {
 
 header('Content-Type: text/plain; charset=utf-8');
 
-echo "=== SOURCES (шукай тут id для 'Мономаркет2') ===\n";
-[$code, $raw] = kc('/source');
-echo "HTTP $code\n$raw\n\n";
+echo "=== SOURCES: пробуємо кілька варіантів шляху ===\n";
+foreach (['/source', '/sources', '/manager-source', '/manager-sources', '/pipelines', '/pipeline'] as $path) {
+    [$code, $raw] = kc($path);
+    echo "--- $path -> HTTP $code ---\n";
+    echo substr($raw, 0, 800) . "\n\n";
+}
 
 echo "=== ОСТАННІ 10 ЗАМОВЛЕНЬ з доставкою (шукай delivery_service_id для Нової Пошти) ===\n";
 [$code, $raw] = kc('/order?limit=10&include=shipping&sort=-id');
