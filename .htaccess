@@ -1,0 +1,6 @@
+RewriteEngine On
+
+# Route all "/api/v1/market/orders..." requests to orders.php.
+# orders.php inspects REQUEST_METHOD and REQUEST_URI itself to figure out
+# which of the four actions (create / get / batch / cancel) was requested.
+RewriteRule ^api/v1/market/orders(.*)$ orders.php [QSA,L]
