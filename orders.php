@@ -25,18 +25,36 @@ define('KEYCRM_SOURCE_ID', 8); // Мономаркет2
 // Delivery services, or GET /order/delivery-service).
 define('KEYCRM_NOVAPOST_DELIVERY_SERVICE_ID', 1); // confirmed from real orders: "Новою поштою на Склад"
 
-// Status mapping: KeyCRM's numeric status_id (as they appear in your
-// pipeline, Settings -> Воронки) -> Мономаркет's status enum
-// (new/accepted/sent/arrived/completed/canceled). The values below are
-// BEST-GUESS defaults from a sample of real orders (status_on_source
-// text observed alongside each id) -- confirm the exact stage names for
-// each id against your actual pipeline settings and adjust as needed.
+// Status mapping: KeyCRM's numeric status_id (Налаштування -> Воронки,
+// pipeline id 1) -> Мономаркет's status enum
+// (new/accepted/sent/arrived/completed/canceled).
+//
+// IMPORTANT: status_id 9's pipeline label says "Дорого" (lost/too
+// expensive), but real order data shows orders with this status_id
+// actually have a tracking_code AND was_shipped=true -- i.e. it's really
+// being used as the "shipped" stage in practice, whatever it's labeled.
+// Mapped here based on that observed behavior, not the (apparently
+// stale/mislabeled) title. Consider renaming that pipeline stage in
+// KeyCRM to avoid future confusion.
 const KEYCRM_TO_MONO_STATUS = [
-    1 => 'accepted',   // observed status_on_source: "В обробці"
-    2 => 'new',        // observed status_on_source: "Новий"
-    9 => 'sent',       // observed alongside a tracking_code -> likely "Відправлено"
-    15 => 'canceled',  // observed status_on_source: "Не доставлений"
-    19 => 'canceled',  // observed with closed_from set -- likely a final/closed stage
+    1 => 'new',        // "Новый"
+    2 => 'accepted',   // "Первый контакт"
+    3 => 'accepted',   // "Дожать"
+    4 => 'completed',  // "Успешный" (final)
+    5 => 'canceled',   // "Недозвон" (final)
+    6 => 'canceled',   // "Нет в наличии" (final)
+    7 => 'canceled',   // "Купил в другом месте" (final)
+    8 => 'canceled',   // "Некорректные данные" (final)
+    9 => 'sent',       // labeled "Дорого" but observed used as "shipped" (has tracking_code + was_shipped=true)
+    28 => 'accepted',  // "Думает"
+    29 => 'accepted',  // "Без ответа"
+    30 => 'accepted',  // "Звонки"
+    // ids 15 and 19 showed up in real order history but are NOT in the
+    // current pipeline's status list -- likely orphaned references to
+    // statuses that were later deleted/renamed. Best-guess mapping based
+    // on the status_on_source text seen alongside them ("Не доставлен").
+    15 => 'canceled',
+    19 => 'canceled',
 ];
 
 // Optional shared-secret check: if set, Мономаркет must send this exact
