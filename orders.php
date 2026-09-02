@@ -268,61 +268,6 @@ function buildKeycrmCreateRequest($mono) {
 $method = $_SERVER['REQUEST_METHOD'];
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
-// TEMPORARY TEST ROUTE -- visit /orders.php?test=1 in a browser to
-// simulate a real Мономаркет order-create request end-to-end and see
-// exactly what gets sent to KeyCRM and what comes back. Remove this
-// block once the integration is confirmed working.
-if (isset($_GET['test'])) {
-    header('Content-Type: text/plain; charset=utf-8');
-    $sampleMono = [
-        'number' => 'TEST-' . time(),
-        'cartNumber' => 'TEST-CART-' . time(),
-        'sum' => 749,
-        'client' => ['name' => ['first' => 'Тест', 'last' => 'Тестовий'], 'phone' => '380631505129'],
-        'recipient' => ['name' => ['first' => 'Тест', 'last' => 'Тестовий'], 'phone' => '380631505129'],
-        'deliveryType' => 'nova-post',
-        'delivery' => [
-            'warehouseId' => '1ec09d2e-e1c2-11e3-8c4a-0050568002cf',
-            'warehouseNumber' => '1',
-            'settlementId' => 'e71abb60-4b33-11e4-ab6d-005056801329',
-            'settlementName' => 'Львів',
-        ],
-        'paymentType' => 'mono--card',
-        'payment' => [],
-        'items' => [[
-            'code' => '41130', // a real Horoshop id from our catalog, for a real vendorCode lookup
-            'quantity' => 1,
-            'price' => 749,
-            'originalPrice' => 749,
-            'discountAmount' => 0,
-            'discountPercent' => 0,
-            'amount' => 749,
-        ]],
-        'callbackUrl' => null,
-        'isTest' => true,
-    ];
-
-    echo "=== 1. Симулюємо замовлення від Мономаркету ===\n";
-    echo json_encode($sampleMono, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n\n";
-
-    $keycrmBody = buildKeycrmCreateRequest($sampleMono);
-    echo "=== 2. Що ми відправляємо в KeyCRM ===\n";
-    echo json_encode($keycrmBody, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n\n";
-
-    [$httpCode, $result] = keycrmRequest('POST', '/order', $keycrmBody);
-    echo "=== 3. Що відповів KeyCRM (HTTP $httpCode) ===\n";
-    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n\n";
-
-    if ($httpCode >= 200 && $httpCode < 300 && isset($result['id'])) {
-        $newId = $result['id'];
-        echo "=== 4. Перевіряємо через Get Order (id=$newId) ===\n";
-        [$getCode, $getResult] = keycrmRequest('GET', "/order/{$newId}");
-        echo "HTTP $getCode\n";
-        echo json_encode(buildMonoOrderResponse($getResult), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n";
-    }
-    exit;
-}
-
 // Match: /api/v1/market/orders/{id}/cancel
 if ($method === 'PUT' && preg_match('#/api/v1/market/orders/([^/]+)/cancel$#', $uri, $m)) {
     $orderId = $m[1];
