@@ -32,6 +32,13 @@ foreach (['/source', '/sources', '/manager-source', '/manager-sources', '/pipeli
     echo substr($raw, 0, 800) . "\n\n";
 }
 
+echo "=== СТАТУСИ ВОРОНКИ: пробуємо кілька варіантів шляху ===\n";
+foreach (['/statuses', '/status', '/pipelines/1/statuses', '/pipelines/1/status', '/pipeline-status', '/pipeline-statuses'] as $path) {
+    [$code, $raw] = kc($path);
+    echo "--- $path -> HTTP $code ---\n";
+    echo substr($raw, 0, 1500) . "\n\n";
+}
+
 echo "=== ОСТАННІ 10 ЗАМОВЛЕНЬ з доставкою (шукай delivery_service_id для Нової Пошти) ===\n";
 [$code, $raw] = kc('/order?limit=10&include=shipping&sort=-id');
 echo "HTTP $code\n$raw\n";
