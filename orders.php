@@ -25,6 +25,12 @@ define('KEYCRM_SOURCE_ID', 8); // Мономаркет2
 // Delivery services, or GET /order/delivery-service).
 define('KEYCRM_NOVAPOST_DELIVERY_SERVICE_ID', 1); // confirmed from real orders: "Новою поштою на Склад"
 
+// KEYCRM_CANCEL_STATUS_ID: which pipeline stage to move an order into
+// when Мономаркет asks us to cancel it. Using "Нет в наличии" (id 6) as
+// a stand-in since there's no dedicated "Скасовано клієнтом" stage in
+// this pipeline yet -- consider adding one in KeyCRM for clarity.
+define('KEYCRM_CANCEL_STATUS_ID', 6);
+
 // Status mapping: KeyCRM's numeric status_id (Налаштування -> Воронки,
 // pipeline id 1) -> Мономаркет's status enum
 // (new/accepted/sent/arrived/completed/canceled).
@@ -110,6 +116,36 @@ function readJsonBody() {
     $raw = file_get_contents('php://input');
     $data = json_decode($raw, true);
     return is_array($data) ? $data : [];
+}
+
+// Deduplication: looks through recent orders from our Мономаркет source
+// for one already tagged with this exact number (stored in
+// manager_comment at creation time). Мономаркет guarantees "at least
+// once" delivery of the create-order request, so retries must find and
+// reuse the existing KeyCRM order rather than creating a second one.
+function findExistingKeycrmOrderByNumber($number) {
+    $needle = 'Мономаркет замовлення №' . $number;
+    [$code, $result] = keycrmRequest('GET', '/order?filter[source_id]=' . KEYCRM_SOURCE_ID . '&limit=50&sort=-id&include=');
+    if ($code !== 200 || !isset($result['data'])) return null;
+    foreach ($result['data'] as $order) {
+        if (($order['manager_comment'] ?? '') === $needle) {
+            return $order['id'];
+        }
+    }
+    return null;
+}
+
+// Validates that every item's Horoshop id resolves to a real product in
+// our own catalog (a real vendorCode) before we ever call KeyCRM. Returns
+// the first missing item's code, or null if all items are valid.
+function findMissingItemCode($monoItems) {
+    foreach (($monoItems ?? []) as $item) {
+        $code = $item['code'] ?? '';
+        if ($code === '' || lookupVendorCodeByOfferId($code) === null) {
+            return $code;
+        }
+    }
+    return null;
 }
 
 // ---------------- Status mapping ----------------
@@ -278,15 +314,20 @@ if ($method === 'PUT' && preg_match('#/api/v1/market/orders/([^/]+)/cancel$#', $
         sendJson(404, ['message' => 'Order does not exist', 'code' => 'NOT_FOUND']);
     }
 
-    // Best-effort: move the KeyCRM order to a status you've mapped to
-    // "canceled" above. Adjust the status_id/status name below to match
-    // an actual cancelled-stage in your pipeline.
+    // We accept the cancellation immediately (cancelStatus "canceled",
+    // not "canceling"), so this must actually move the KeyCRM order to a
+    // status that KEYCRM_TO_MONO_STATUS maps to 'canceled' -- otherwise a
+    // later GetOrder call would show cancelStatus=null again, since that
+    // field is derived from the order's current status_id.
     keycrmRequest('PUT', "/order/{$orderId}", [
+        'status_id' => KEYCRM_CANCEL_STATUS_ID,
         'manager_comment' => trim(($existing['manager_comment'] ?? '') . "\nСкасування від Мономаркету: cancelId=" . ($cancelBody['cancelId'] ?? '')),
     ]);
 
     [, $updated] = keycrmRequest('GET', "/order/{$orderId}");
-    sendJson(200, buildMonoOrderResponse($updated ?: $existing));
+    $response = buildMonoOrderResponse($updated ?: $existing);
+    $response['cancelStatus'] = 'canceled'; // guaranteed non-null on a successful cancel response
+    sendJson(200, $response);
 }
 
 // Match: /api/v1/market/orders/batch
@@ -324,6 +365,23 @@ if ($method === 'POST' && preg_match('#/api/v1/market/orders/?$#', $uri)) {
             'message' => 'Some validation errors happened',
             'code' => 'VALIDATION_ERROR',
             'errors' => ['number' => 'number is required'],
+        ]);
+    }
+
+    // Dedup: if we've already created a KeyCRM order for this exact
+    // Мономаркет order number, return it again (200) instead of creating
+    // a duplicate (201 is only for genuinely new orders).
+    $existingId = findExistingKeycrmOrderByNumber($mono['number']);
+    if ($existingId !== null) {
+        sendJson(200, ['id' => (string)$existingId]);
+    }
+
+    // Validate every item exists in our catalog before creating anything.
+    $missingCode = findMissingItemCode($mono['items'] ?? []);
+    if ($missingCode !== null) {
+        sendJson(409, [
+            'message' => "Product with code {$missingCode} does not exist",
+            'code' => 'ITEM_NOT_FOUND',
         ]);
     }
 
