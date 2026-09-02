@@ -23,22 +23,20 @@ define('KEYCRM_SOURCE_ID', 8); // Мономаркет2
 // KEYCRM_NOVAPOST_DELIVERY_SERVICE_ID: the numeric id KeyCRM uses
 // internally for "Нова Пошта" as a delivery service (Settings ->
 // Delivery services, or GET /order/delivery-service).
-define('KEYCRM_NOVAPOST_DELIVERY_SERVICE_ID', 0); // TODO: set this
+define('KEYCRM_NOVAPOST_DELIVERY_SERVICE_ID', 1); // confirmed from real orders: "Новою поштою на Склад"
 
-// Status mapping: KeyCRM status names (as they appear in your pipeline,
-// Settings -> Pipelines) -> Мономаркет's status enum
-// (new/accepted/sent/arrived/completed/canceled). Adjust the KEYS on the
-// left to match your actual KeyCRM pipeline stage names exactly -- these
-// are placeholders based on common defaults.
+// Status mapping: KeyCRM's numeric status_id (as they appear in your
+// pipeline, Settings -> Воронки) -> Мономаркет's status enum
+// (new/accepted/sent/arrived/completed/canceled). The values below are
+// BEST-GUESS defaults from a sample of real orders (status_on_source
+// text observed alongside each id) -- confirm the exact stage names for
+// each id against your actual pipeline settings and adjust as needed.
 const KEYCRM_TO_MONO_STATUS = [
-    'Новий' => 'new',
-    'Новая' => 'new',
-    'В роботі' => 'accepted',
-    'Підтверджено' => 'accepted',
-    'Відправлено' => 'sent',
-    'Доставлено' => 'arrived',
-    'Виконано' => 'completed',
-    'Скасовано' => 'canceled',
+    1 => 'accepted',   // observed status_on_source: "В обробці"
+    2 => 'new',        // observed status_on_source: "Новий"
+    9 => 'sent',       // observed alongside a tracking_code -> likely "Відправлено"
+    15 => 'canceled',  // observed status_on_source: "Не доставлений"
+    19 => 'canceled',  // observed with closed_from set -- likely a final/closed stage
 ];
 
 // Optional shared-secret check: if set, Мономаркет must send this exact
@@ -98,8 +96,8 @@ function readJsonBody() {
 
 // ---------------- Status mapping ----------------
 function mapKeycrmStatusToMono($keycrmOrder) {
-    $statusName = $keycrmOrder['status']['name'] ?? ($keycrmOrder['status_name'] ?? '');
-    return KEYCRM_TO_MONO_STATUS[$statusName] ?? 'accepted'; // unrecognized status -> safest default
+    $statusId = $keycrmOrder['status_id'] ?? null;
+    return KEYCRM_TO_MONO_STATUS[$statusId] ?? 'accepted'; // unrecognized status -> safest default
 }
 
 // Builds the "Success order get response" shape Мономаркет expects, from
@@ -111,8 +109,10 @@ function buildMonoOrderResponse($keycrmOrder) {
     $shipmentType = null;
     $shipment = null;
     if ($ttn) {
-        $isCourier = ($keycrmOrder['shipping']['delivery_service_name'] ?? '') !== ''
-            && stripos((string)($keycrmOrder['shipping']['delivery_service_name'] ?? ''), 'кур') !== false;
+        // Real field observed: shipping_preferred_method, e.g. "Новою поштою
+        // на Склад" (warehouse) vs "Кур'єром по ..." (courier).
+        $preferredMethod = (string)($keycrmOrder['shipping']['shipping_preferred_method'] ?? '');
+        $isCourier = stripos($preferredMethod, 'кур') !== false;
         $shipmentType = $isCourier ? 'courier:nova-post' : 'nova-post';
         $shipment = ['ttn' => (string)$ttn];
     }
