@@ -476,7 +476,9 @@ if ($type === 'catalog') {
     foreach (iterateOffers($tmpFeedFile) as $offer) {
             $offerId = (string)$offer['id'];
             $categoryIdSrc = isset($offer->categoryId) ? (string)$offer->categoryId : '';
-            if ($categoryIdSrc === '1059') continue; // beds removed from the feed entirely, per agreement with Мономаркет
+            if (in_array($categoryIdSrc, ['1059', '1064', '1062'], true)) continue; // beds, pillows, and mattress protectors removed from the feed entirely, per agreement with Мономаркет
+            $vendorForExclusionCheck = isset($offer->vendor) ? (string)$offer->vendor : '';
+            if (mb_stripos($vendorForExclusionCheck, 'utech') !== false || mb_stripos($vendorForExclusionCheck, 'ютек') !== false) continue; // UTech (наматрацники/подушки) removed from the feed entirely
             $vendorCode = isset($offer->vendorCode) ? (string)$offer->vendorCode : '';
             $brand = isset($offer->vendor) ? (string)$offer->vendor : '';
             $titleRaw = isset($offer->name) ? (string)$offer->name : '';
@@ -588,7 +590,9 @@ if ($type === 'prices') {
     foreach (iterateOffers($tmpFeedFile) as $offer) {
             $offerId = (string)$offer['id'];
             $categoryIdSrc = isset($offer->categoryId) ? (string)$offer->categoryId : '';
-            if ($categoryIdSrc === '1059') continue; // beds removed from the feed entirely, per agreement with Мономаркет
+            if (in_array($categoryIdSrc, ['1059', '1064', '1062'], true)) continue; // beds, pillows, and mattress protectors removed from the feed entirely, per agreement with Мономаркет
+            $vendorForExclusionCheck = isset($offer->vendor) ? (string)$offer->vendor : '';
+            if (mb_stripos($vendorForExclusionCheck, 'utech') !== false || mb_stripos($vendorForExclusionCheck, 'ютек') !== false) continue; // UTech (наматрацники/подушки) removed from the feed entirely
             $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
             $horoshopAvailable = in_array($availAttr, ['true', '1', 'yes']);
             // If Horoshop says "not in stock", we no longer hide the
