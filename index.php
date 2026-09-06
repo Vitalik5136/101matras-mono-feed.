@@ -5,6 +5,27 @@
 define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/bf5ada79a4036e96ecc39bc3173ff7a2.xml');
 define('SUPPLIER_STOCK_CSV_URL', 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGcRlGkFyXq5e7fp6crNoKM3iOyp7A96vCHGjTBvK_FJz0uHXkkf8kqUCFPkAbHBPHWDM_aHcqeClU/pub?gid=1912985661&single=true&output=tsv');
 
+// ---------------------------------------------------------------
+// Точкове блокування окремих товарів за vendorCode (артикул з 1С).
+// 'remove'      -- товар не потрапляє у фід взагалі
+// 'unavailable' -- товар лишається, але недоступний до замовлення
+// ---------------------------------------------------------------
+$BLOCKED_SKUS = [
+    'УТ000099199', // Матрац Eurosleep City Twin Cocos 17 -- ціна вказана за кв. метр
+];
+define('BLOCKED_SKU_MODE', 'remove'); // 'remove' | 'unavailable'
+
+function isBlockedSku($offer) {
+    global $BLOCKED_SKUS;
+    if (empty($BLOCKED_SKUS)) return false;
+    $vc = isset($offer->vendorCode) ? trim((string)$offer->vendorCode) : '';
+    if ($vc === '') return false;
+    foreach ($BLOCKED_SKUS as $blocked) {
+        if (mb_strtoupper(trim($blocked)) === mb_strtoupper($vc)) return true;
+    }
+    return false;
+}
+
 ini_set('memory_limit', '512M');
 set_time_limit(120);
 
@@ -479,6 +500,7 @@ if ($type === 'catalog') {
             if (in_array($categoryIdSrc, ['1059', '1064', '1062'], true)) continue; // beds, pillows, and mattress protectors removed from the feed entirely, per agreement with Мономаркет
             $vendorForExclusionCheck = isset($offer->vendor) ? (string)$offer->vendor : '';
             if (mb_stripos($vendorForExclusionCheck, 'utech') !== false || mb_stripos($vendorForExclusionCheck, 'ютек') !== false) continue; // UTech (наматрацники/подушки) removed from the feed entirely
+            if (isBlockedSku($offer) && BLOCKED_SKU_MODE === 'remove') continue; // точкове блокування за артикулом
             $vendorCode = isset($offer->vendorCode) ? (string)$offer->vendorCode : '';
             $brand = isset($offer->vendor) ? (string)$offer->vendor : '';
             $titleRaw = isset($offer->name) ? (string)$offer->name : '';
@@ -593,6 +615,7 @@ if ($type === 'prices') {
             if (in_array($categoryIdSrc, ['1059', '1064', '1062'], true)) continue; // beds, pillows, and mattress protectors removed from the feed entirely, per agreement with Мономаркет
             $vendorForExclusionCheck = isset($offer->vendor) ? (string)$offer->vendor : '';
             if (mb_stripos($vendorForExclusionCheck, 'utech') !== false || mb_stripos($vendorForExclusionCheck, 'ютек') !== false) continue; // UTech (наматрацники/подушки) removed from the feed entirely
+            if (isBlockedSku($offer) && BLOCKED_SKU_MODE === 'remove') continue; // точкове блокування за артикулом
             $availAttr = isset($offer['available']) ? strtolower((string)$offer['available']) : 'false';
             $horoshopAvailable = in_array($availAttr, ['true', '1', 'yes']);
             // If Horoshop says "not in stock", we no longer hide the
@@ -704,6 +727,8 @@ if ($type === 'prices') {
             if ($isEmm && !$isCustomSizeOrder) {
                 $daysToDispatch = 12;
             }
+
+            if (isBlockedSku($offer)) { $isAvailable = false; $realStock = 0; } // точкове блокування, режим unavailable
 
             $data[] = [
                 'code' => $offerId,
