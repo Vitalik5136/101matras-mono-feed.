@@ -39,7 +39,7 @@ define('BLOCKED_SKU_MODE', 'remove'); // 'remove' | 'unavailable'
 // Підрядковий пошук без урахування регістру -- 'brn' ловить і
 // "BRN", і "BRN Family" одним записом.
 // ---------------------------------------------------------------
-$HIDDEN_BRANDS = ['brn', 'come-for aero', 'magniflex', 'jbm'];
+$HIDDEN_BRANDS = ['brn', 'come-for aero', 'magniflex', 'jbm', 'dormisan'];
 
 function isHiddenBrand($brand) {
     global $HIDDEN_BRANDS;
