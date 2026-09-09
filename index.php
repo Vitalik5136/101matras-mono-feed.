@@ -12,8 +12,42 @@ define('SUPPLIER_STOCK_CSV_URL', 'https://docs.google.com/spreadsheets/d/e/2PACX
 // ---------------------------------------------------------------
 $BLOCKED_SKUS = [
     'УТ000099199', // Матрац Eurosleep City Twin Cocos 17 -- ціна вказана за кв. метр
+
+    // --- DORMISAN Luna: модель повністю виключена з фіда (усі 16 розмірів) ---
+    '00000001659', 'УТ000008584', 'УТ000008585', 'УТ000008586', 'УТ000008587',
+    'УТ000008588', 'УТ000008591', 'УТ000008592', 'УТ000008593', 'УТ000008594',
+    'УТ000008595', 'УТ000008596', 'УТ000008590', 'УТ000008598', 'УТ000108626',
+    'УТ000108627',
+
+    // --- EMM Twist / Twist Cocos / Karat / Agat: повністю виключені з фіда ---
+    'УТ000108939', 'УТ000108940', 'УТ000108947', 'УТ000108941', 'УТ000108948',
+    'УТ000108942', 'УТ000108949', 'УТ000108943', 'УТ000108950', 'УТ000108944',
+    'УТ000108951', 'УТ000108945', 'УТ000108952', 'УТ000108946', 'УТ000108953',
+    'УТ000108954', // EMM Twist (16 розмірів)
+    'УТ000108958', // EMM Agat
+    'УТ000108957', // EMM Karat
+    'УТ000111348', 'УТ000111349', 'УТ000111356', 'УТ000111350', 'УТ000111357',
+    'УТ000111351', 'УТ000111358', 'УТ000111352', 'УТ000111359', 'УТ000111353',
+    'УТ000111360', 'УТ000111354', 'УТ000111361', 'УТ000111355', 'УТ000111362',
+    'УТ000111363', // EMM Twist Cocos (16 розмірів)
 ];
 define('BLOCKED_SKU_MODE', 'remove'); // 'remove' | 'unavailable'
+
+// ---------------------------------------------------------------
+// Бренди, які лишаються у фіді, але завжди позначені як недоступні
+// до замовлення (Мономаркет їх бачить, замовити не можна).
+// Підрядковий пошук без урахування регістру -- 'brn' ловить і
+// "BRN", і "BRN Family" одним записом.
+// ---------------------------------------------------------------
+$HIDDEN_BRANDS = ['brn', 'come-for aero', 'magniflex', 'jbm'];
+
+function isHiddenBrand($brand) {
+    global $HIDDEN_BRANDS;
+    foreach ($HIDDEN_BRANDS as $b) {
+        if (mb_stripos($brand, $b) !== false) return true;
+    }
+    return false;
+}
 
 function isBlockedSku($offer) {
     global $BLOCKED_SKUS;
@@ -726,6 +760,23 @@ if ($type === 'prices') {
             $isEmm = mb_stripos($brandForCheck, 'emm') !== false;
             if ($isEmm && !$isCustomSizeOrder) {
                 $daysToDispatch = 12;
+            }
+
+            // Manufacturer exception: DORMISAN always ships in 14 days
+            // (Luna model is removed from the feed entirely above, via
+            // $BLOCKED_SKUS). Still yields to the custom-size rule above.
+            $isDormisan = mb_stripos($brandForCheck, 'dormisan') !== false;
+            if ($isDormisan && !$isCustomSizeOrder) {
+                $daysToDispatch = 14;
+            }
+
+            // Hidden brands (BRN, BRN Family, Come-for Aero, Magniflex,
+            // JBM): stay in the feed, but never orderable. This overrides
+            // the "mattresses always available" rule above, and yields
+            // only to nothing -- it's the final word on availability for
+            // these brands, applied even for a matched/custom-size row.
+            if (isHiddenBrand($brandForCheck)) {
+                $isAvailable = false;
             }
 
             if (isBlockedSku($offer)) { $isAvailable = false; $realStock = 0; } // точкове блокування, режим unavailable
