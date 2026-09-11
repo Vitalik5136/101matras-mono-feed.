@@ -2,7 +2,7 @@
 // ==========================================
 // CONFIGURATION
 // ==========================================
-define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/bf5ada79a4036e96ecc39bc3173ff7a2.xml');
+define('HOROSHOP_FEED_URL', 'https://101matras.ua/content/export/dd757bfda4c054c1f046c00885623795.xml');
 define('SUPPLIER_STOCK_CSV_URL', 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRGcRlGkFyXq5e7fp6crNoKM3iOyp7A96vCHGjTBvK_FJz0uHXkkf8kqUCFPkAbHBPHWDM_aHcqeClU/pub?gid=1912985661&single=true&output=tsv');
 
 // ---------------------------------------------------------------
