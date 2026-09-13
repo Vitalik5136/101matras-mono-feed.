@@ -128,7 +128,9 @@ function findExistingKeycrmOrderByNumber($number) {
     [$code, $result] = keycrmRequest('GET', '/order?filter[source_id]=' . KEYCRM_SOURCE_ID . '&limit=50&sort=-id&include=');
     if ($code !== 200 || !isset($result['data'])) return null;
     foreach ($result['data'] as $order) {
-        if (($order['manager_comment'] ?? '') === $needle) {
+        // startsWith rather than exact match: courier orders get extra
+        // " | np_settlement_id=..." appended after the number.
+        if (strpos((string)($order['manager_comment'] ?? ''), $needle) === 0) {
             return $order['id'];
         }
     }
@@ -262,11 +264,18 @@ function buildKeycrmCreateRequest($mono) {
         ];
     } elseif ($deliveryType === 'courier:nova-post') {
         $addr = trim(($delivery['address'] ?? '') . ' ' . ($delivery['house'] ?? ''));
+        // Keep flat AND floor in the stored text (parsed back out later by
+        // ship.php when creating the actual Nova Poshta ТТН) -- KeyCRM has
+        // no dedicated fields for these, so this is the only place they
+        // survive past order creation.
+        $secondaryLine = $addr;
+        if (isset($delivery['flat'])) $secondaryLine .= ', кв. ' . $delivery['flat'];
+        if (isset($delivery['floor'])) $secondaryLine .= ', поверх ' . $delivery['floor'];
         $shippingBlock = [
             'delivery_service_id' => KEYCRM_NOVAPOST_DELIVERY_SERVICE_ID,
             'shipping_address_city' => $delivery['settlement'] ?? '',
             'shipping_address_region' => $delivery['area'] ?? '',
-            'shipping_secondary_line' => $addr . (isset($delivery['flat']) ? (', кв. ' . $delivery['flat']) : ''),
+            'shipping_secondary_line' => $secondaryLine,
         ];
         // NOTE: Nova Poshta requires "MarketplacePartnerToken" (confirmed
         // real value from Мономаркет: 1ba2a77906a9-a827-46f4-3555-e60089ac)
@@ -288,6 +297,14 @@ function buildKeycrmCreateRequest($mono) {
     // in-store-pickup: intentionally left minimal; add your pickup point
     // mapping here if/when you support self-pickup orders.
 
+    // Nova Poshta settlementId (needed later by ship.php to actually create
+    // the courier ТТН) -- KeyCRM has no field for this, so it's tucked into
+    // manager_comment alongside the order number.
+    $npSettlementIdNote = '';
+    if ($deliveryType === 'courier:nova-post' && !empty($delivery['settlementId'])) {
+        $npSettlementIdNote = ' | np_settlement_id=' . $delivery['settlementId'];
+    }
+
     return [
         'source_id' => KEYCRM_SOURCE_ID,
         'buyer' => [
@@ -296,7 +313,7 @@ function buildKeycrmCreateRequest($mono) {
         ],
         'shipping' => $shippingBlock,
         'products' => $products,
-        'manager_comment' => 'Мономаркет замовлення №' . ($mono['number'] ?? ''),
+        'manager_comment' => 'Мономаркет замовлення №' . ($mono['number'] ?? '') . $npSettlementIdNote,
     ];
 }
 
