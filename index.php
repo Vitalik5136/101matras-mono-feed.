@@ -770,12 +770,30 @@ if ($type === 'prices') {
                 $daysToDispatch = 14;
             }
 
+            // ---------------------------------------------------------------
+            // TEMPORARY EXPERIMENT (за проханням Віталика, 2026-09-17): один
+            // конкретний матрац BRN "King Firm" показуємо доступним для
+            // замовлення з фіксованою кількістю "10 шт.", щоб перевірити, чи
+            // товар з'явиться на вітрині Мономаркету. Решта BRN лишається
+            // прихованою як і раніше (isHiddenBrand нижче). Прибрати цей
+            // блок або замінити на повноцінну інтеграцію реального складу
+            // БРН, коли буде вирішено питання з доступом до їхньої таблиці.
+            // ---------------------------------------------------------------
+            $isBrnKingFirmExperiment = mb_stripos($brandForCheck, 'brn') !== false
+                && mb_stripos($titleForCustomSizeCheck, 'king firm') !== false;
+            if ($isBrnKingFirmExperiment) {
+                $isAvailable = true;
+                $realStock = 10;
+            }
+
             // Hidden brands (BRN, BRN Family, Come-for Aero, Magniflex,
             // JBM): stay in the feed, but never orderable. This overrides
             // the "mattresses always available" rule above, and yields
             // only to nothing -- it's the final word on availability for
             // these brands, applied even for a matched/custom-size row.
-            if (isHiddenBrand($brandForCheck)) {
+            // (Except the King Firm experiment above, which is meant to
+            // win over this.)
+            if (isHiddenBrand($brandForCheck) && !$isBrnKingFirmExperiment) {
                 $isAvailable = false;
             }
 
