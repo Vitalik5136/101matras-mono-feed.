@@ -38,8 +38,10 @@ define('BLOCKED_SKU_MODE', 'remove'); // 'remove' | 'unavailable'
 // до замовлення (Мономаркет їх бачить, замовити не можна).
 // Підрядковий пошук без урахування регістру -- 'brn' ловить і
 // "BRN", і "BRN Family" одним записом.
+// DORMISAN прибрано звідси 2026-09-24 -- тепер доступний до
+// замовлення, термін відправки 14 днів (див. нижче в type=prices).
 // ---------------------------------------------------------------
-$HIDDEN_BRANDS = ['brn', 'come-for aero', 'magniflex', 'jbm', 'dormisan'];
+$HIDDEN_BRANDS = ['brn', 'come-for aero', 'magniflex', 'jbm'];
 
 function isHiddenBrand($brand) {
     global $HIDDEN_BRANDS;
@@ -711,20 +713,14 @@ if ($type === 'prices') {
 
             // Use the installment count from the source feed if Horoshop
             // ever starts providing one (checked under a few plausible
-            // tag names); default to 10 payments when it's missing.
-            $maxPayInParts = 6;
+            // tag names); default to 7 payments when it's missing.
+            // Changed from 6 -> 7 for ALL brands on 2026-09-24 (previously
+            // only "Тур Турция" and artisan/fdm/silence were at 7 while
+            // everything else was 6 -- now everyone gets 7).
+            $maxPayInParts = 7;
             foreach (['max_pay_in_parts', 'installment', 'parts', 'rassrochka'] as $tagName) {
                 if (isset($offer->{$tagName}) && trim((string)$offer->{$tagName}) !== '') {
                     $maxPayInParts = (int)$offer->{$tagName};
-                    break;
-                }
-            }
-
-            // These manufacturers get 7 installments instead of 6.
-            $sevenInstallmentBrands = ['artisan', 'fdm', 'silence'];
-            foreach ($sevenInstallmentBrands as $b) {
-                if (mb_stripos($brandForCheck, $b) !== false) {
-                    $maxPayInParts = 7;
                     break;
                 }
             }
@@ -741,30 +737,34 @@ if ($type === 'prices') {
                 $daysToDispatch = $horoshopAvailable ? 3 : 12;
             }
 
-            // Brand exception: Eurosleep always ships in 10 days, regardless
+            // Brand exception: Eurosleep always ships in 5 days, regardless
             // of stock/availability signals -- yields only to the
-            // custom-size rule above.
+            // custom-size rule above. (Changed from 6 -> 5 on 2026-09-24.)
             $isEuroslip = mb_stripos($brandForCheck, 'eurosleep') !== false
                 || mb_stripos($brandForCheck, 'euroslip') !== false
                 || mb_stripos($brandForCheck, 'euro slip') !== false
                 || mb_stripos($brandForCheck, 'єврослип') !== false
                 || mb_stripos($brandForCheck, 'еврослип') !== false;
             if ($isEuroslip && !$isCustomSizeOrder) {
-                $daysToDispatch = 6;
+                $daysToDispatch = 5;
             }
 
             // Manufacturer exception: EMM (covers all their mattress
-            // brands, e.g. "EMM Melange") always ships in 12 days,
-            // regardless of availability. Still yields to the custom-size
-            // rule above.
+            // brands, e.g. "EMM Melange") ships in 5 days when Horoshop's
+            // own flag says the item is in stock, otherwise 11 days. Still
+            // yields to the custom-size rule above. (Changed from a flat
+            // 12 on 2026-09-24.)
             $isEmm = mb_stripos($brandForCheck, 'emm') !== false;
             if ($isEmm && !$isCustomSizeOrder) {
-                $daysToDispatch = 12;
+                $daysToDispatch = $horoshopAvailable ? 5 : 11;
             }
 
             // Manufacturer exception: DORMISAN always ships in 14 days
             // (Luna model is removed from the feed entirely above, via
             // $BLOCKED_SKUS). Still yields to the custom-size rule above.
+            // DORMISAN was removed from $HIDDEN_BRANDS on 2026-09-24, so
+            // this brand is now orderable again -- this is the rule that
+            // actually takes effect for it now.
             $isDormisan = mb_stripos($brandForCheck, 'dormisan') !== false;
             if ($isDormisan && !$isCustomSizeOrder) {
                 $daysToDispatch = 14;
