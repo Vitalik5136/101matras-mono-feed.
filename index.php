@@ -713,11 +713,10 @@ if ($type === 'prices') {
 
             // Use the installment count from the source feed if Horoshop
             // ever starts providing one (checked under a few plausible
-            // tag names); default to 7 payments when it's missing.
-            // Changed from 6 -> 7 for ALL brands on 2026-09-24 (previously
-            // only "Тур Турция" and artisan/fdm/silence were at 7 while
-            // everything else was 6 -- now everyone gets 7).
-            $maxPayInParts = 7;
+            // tag names); default to 6 payments when it's missing.
+            // Changed to 7 for ALL brands on 2026-09-24, then reverted
+            // back to 6 for ALL brands on 2026-09-28.
+            $maxPayInParts = 6;
             foreach (['max_pay_in_parts', 'installment', 'parts', 'rassrochka'] as $tagName) {
                 if (isset($offer->{$tagName}) && trim((string)$offer->{$tagName}) !== '') {
                     $maxPayInParts = (int)$offer->{$tagName};
