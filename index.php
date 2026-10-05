@@ -51,6 +51,26 @@ function isHiddenBrand($brand) {
     return false;
 }
 
+// ---------------------------------------------------------------
+// Точкове блокування за НАЗВОЮ моделі (коли точних артикулів/SKU
+// немає під рукою -- працює для будь-якого розміру товару з такою
+// назвою, автоматично, без потреби перелічувати кожен варіант).
+// Повністю видаляє товар із фіда (усі три типи: catalog/prices/variants).
+//   - "EMM Sleep&Fly Organic" -- прибрано 2026-10-05.
+//   - "Матрас Arabeska"       -- прибрано 2026-10-05, КРІМ "Arabeska Boho",
+//                                який лишається в фіді як і раніше.
+// ---------------------------------------------------------------
+function isBlockedTitle($title) {
+    if (mb_stripos($title, 'sleep&fly organic') !== false
+        || mb_stripos($title, 'sleep & fly organic') !== false) {
+        return true;
+    }
+    if (mb_stripos($title, 'arabeska') !== false && mb_stripos($title, 'boho') === false) {
+        return true;
+    }
+    return false;
+}
+
 function isBlockedSku($offer) {
     global $BLOCKED_SKUS;
     if (empty($BLOCKED_SKUS)) return false;
@@ -540,6 +560,7 @@ if ($type === 'catalog') {
             $vendorCode = isset($offer->vendorCode) ? (string)$offer->vendorCode : '';
             $brand = isset($offer->vendor) ? (string)$offer->vendor : '';
             $titleRaw = isset($offer->name) ? (string)$offer->name : '';
+            if (isBlockedTitle($titleRaw)) continue; // товар видалено з фіда за назвою моделі
             $title = preg_replace('/\bМатрас\b/u', 'Матрац', $titleRaw);
             $descriptionHtml = isset($offer->description) ? (string)$offer->description : '';
 
@@ -664,6 +685,7 @@ if ($type === 'prices') {
             // force these to unavailable regardless of category or what
             // the source feed (or the supplier stock match below) says.
             $titleForCustomSizeCheck = isset($offer->name) ? (string)$offer->name : '';
+            if (isBlockedTitle($titleForCustomSizeCheck)) continue; // товар видалено з фіда за назвою моделі
             $isCustomSizeOrder = mb_stripos($titleForCustomSizeCheck, 'під замов') !== false // catches "під замовлення" even truncated to "під замов" (Horoshop cuts long titles)
                 || mb_stripos($titleForCustomSizeCheck, 'розмір під замовлення') !== false
                 || mb_stripos($titleForCustomSizeCheck, 'под заказ') !== false
@@ -848,6 +870,7 @@ if ($type === 'variants') {
 
         $offerId = (string)$offer['id'];
         $title = isset($offer->name) ? (string)$offer->name : '';
+        if (isBlockedTitle($title)) continue; // товар видалено з фіда за назвою моделі
 
         // Strip the size pattern (and its optional "(NNсм)" thickness) to
         // get the model's identity, the same way estimateDimensions finds
